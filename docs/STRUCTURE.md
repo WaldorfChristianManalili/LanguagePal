@@ -64,20 +64,21 @@ languagepal/
 │   │   │   │   ├── Register.tsx
 │   │   │   │   └── AuthWrapper.tsx
 │   │   │   │
+│   │   │   ├── common/
+│   │   │   │   ├── Navbar.tsx
+│   │   │   │   ├── Footer.tsx
+│   │   │   │   └── LoadingSpinner.tsx
+│   │   │   │
 │   │   │   ├── dashboard/
 │   │   │   │   ├── UserDashboard.tsx
 │   │   │   │   ├── ProgressTracker.tsx
 │   │   │   │   └── Achievements.tsx
 │   │   │   │
-│   │   │   ├── language-activities/
-│   │   │   │   ├── SentenceConstructionGame.tsx
-│   │   │   │   ├── VocabularyFlashcards.tsx
-│   │   │   │   └── ConversationPractice.tsx
-│   │   │   │
-│   │   │   └── common/
-│   │   │       ├── Navbar.tsx
-│   │   │       ├── Footer.tsx
-│   │   │       └── LoadingSpinner.tsx
+│   │   │   └── language-activities/
+│   │   │       ├── SentenceConstructionGame.tsx
+│   │   │       ├── VocabularyFlashcards.tsx
+│   │   │       └── ConversationPractice.tsx
+│   │   │   
 │   │   │
 │   │   ├── contexts/
 │   │   │   ├── AuthContext.tsx
