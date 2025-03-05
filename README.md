@@ -5,31 +5,31 @@ LanguagePal is an interactive AI chatbot designed to make language learning fun 
 
 ## Key Features
 1. Sentence Construction & Correction
-- The bot gives a set of words, and the user must rearrange them into a correct sentence
-- The bot provides grammar tips based on mistakes
+    - The bot gives a set of words, and the user must rearrange them into a correct sentence
+    - The bot provides grammar tips based on mistakes
 
 2. Vocabulary Building
-- Flashcard-style vocabulary learning with spaced repetition
-- Context-based word usage examples
-- Word of the day challenges
+    - Flashcard-style vocabulary learning with spaced repetition
+    - Context-based word usage examples
+    - Word of the day challenges
 
 3. Conversation Practice
-- Simulated dialogues in chosen language
-- Multiple-choice responses for beginners
-- Free-form text input for advanced learners
-- Pronunciation feedback (text-based)
+    - Simulated dialogues in chosen language
+    - Multiple-choice responses for beginners
+    - Free-form text input for advanced learners
+    - Pronunciation feedback (text-based)
 
 4. Gamification Elements (OPTIONAL)
-- Points system for completed activities
-- Difficulty-based rewards
-- Daily streaks and achievements
-- Leaderboards for motivation
+    - Points system for completed activities
+    - Difficulty-based rewards
+    - Daily streaks and achievements
+    - Leaderboards for motivation
 
 5. Progress Tracking (OPTIONAL)
-- Visual representation of learning progress
-- Skill level assessment
-- Detailed performance statistics
-- Weak area identification
+    - Visual representation of learning progress
+    - Skill level assessment
+    - Detailed performance statistics
+    - Weak area identification
 
 ## Technical Stack
 - **Frontend:** React  
