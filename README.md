@@ -32,15 +32,15 @@ LanguagePal is an interactive AI chatbot designed to make language learning fun 
 -Weak area identification
 
 ## Technical Stack
-Frontend: React
-Backend: FastAPI (Python)
-Database: PostgreSQL with SQLAlchemy ORM
-Might need:
-NLP: spaCy for basic language processing 
-Authentication: Simple JWT implementation
-Optional:
-Containerization: Docker with Docker Compose
-Caching: Redis for performance optimization
+- **Frontend:** React  
+- **Backend:** FastAPI (Python)  
+- **Database:** PostgreSQL with SQLAlchemy ORM  
+- **Might need:**  
+  - **NLP:** spaCy for basic language processing  
+  - **Authentication:** Simple JWT implementation  
+- **Optional:**  
+  - **Containerization:** Docker with Docker Compose  
+  - **Caching:** Redis for performance optimization  
 
 # Notes
 The main goal for this project was to serve as an opportunity to refine my technical skills in both AI and software deployment, ensuring that the application is optimized, accessible, and ready for real-world use. I was really curious about AI and I've seen that Python is pretty good at using it. I also wanted to try Docker for deployment since I saw (from the internet) that developers in the industry use it a lot to ensure that software runs the same way in different systems.
