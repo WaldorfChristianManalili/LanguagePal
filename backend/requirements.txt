@@ -1,0 +1,7 @@
+fastapi==0.115.11
+uvicorn==0.34.0
+pydantic==2.10.6
+sqlalchemy==2.0.38
+python-jose==3.4.0
+passlib==1.7.4
+spacy==3.7.2

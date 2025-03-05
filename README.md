@@ -42,6 +42,45 @@ LanguagePal is an interactive AI chatbot designed to make language learning fun 
   - **Containerization:** Docker with Docker Compose  
   - **Caching:** Redis for performance optimization  
 
+# Setup Instructions
+```
+# Navigate to the backend
+cd backend
+
+# Setup virtual environment
+python -m venv env
+
+# Activate the virtual environment
+# Windows:
+env\Scripts\activate
+# macOS/Linux:
+source env/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Download spaCy language model
+python -m spacy download en_core_web_sm
+
+# Running Both Servers
+1. Open two terminal windows.
+
+    In the first terminal, navigate to the backend and run:
+    # Windows:
+    env\Scripts\activate
+    # macOS/Linux:
+    source env/bin/activate
+    
+    # Server will run on http://localhost:8000
+    uvicorn app.main:app --reload
+
+2. In the second terminal, navigate to the frontend and run:
+    npm install
+
+    # Server will run on http://localhost:5173
+    npm run dev
+```
+
 # Notes
 The main goal for this project was to serve as an opportunity to refine my technical skills in both AI and software deployment, ensuring that the application is optimized, accessible, and ready for real-world use. I was really curious about AI and I've seen that Python is pretty good at using it. I also wanted to try Docker for deployment since I saw (from the internet) that developers in the industry use it a lot to ensure that software runs the same way in different systems. 
 

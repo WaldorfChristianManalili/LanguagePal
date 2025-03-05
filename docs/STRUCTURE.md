@@ -55,58 +55,74 @@ languagepal/
 ├── frontend/
 │   ├── public/
 │   │   ├── index.html
-│   │   ├── favicon.ico
-│   │   └── manifest.json
+│   │   └── vite.svg
 │   │
 │   ├── src/
-│   │   ├── index.js
-│   │   ├── App.js
-│   │   │
 │   │   ├── components/
 │   │   │   ├── auth/
-│   │   │   │   ├── Login.js
-│   │   │   │   ├── Register.js
-│   │   │   │   └── AuthWrapper.js
+│   │   │   │   ├── Login.tsx
+│   │   │   │   ├── Register.tsx
+│   │   │   │   └── AuthWrapper.tsx
 │   │   │   │
 │   │   │   ├── dashboard/
-│   │   │   │   ├── UserDashboard.js
-│   │   │   │   ├── ProgressTracker.js
-│   │   │   │   └── Achievements.js
+│   │   │   │   ├── UserDashboard.tsx
+│   │   │   │   ├── ProgressTracker.tsx
+│   │   │   │   └── Achievements.tsx
 │   │   │   │
 │   │   │   ├── language-activities/
-│   │   │   │   ├── SentenceConstructionGame.js
-│   │   │   │   ├── VocabularyFlashcards.js
-│   │   │   │   └── ConversationPractice.js
+│   │   │   │   ├── SentenceConstructionGame.tsx
+│   │   │   │   ├── VocabularyFlashcards.tsx
+│   │   │   │   └── ConversationPractice.tsx
 │   │   │   │
 │   │   │   └── common/
-│   │   │       ├── Navbar.js
-│   │   │       ├── Footer.js
-│   │   │       └── LoadingSpinner.js
+│   │   │       ├── Navbar.tsx
+│   │   │       ├── Footer.tsx
+│   │   │       └── LoadingSpinner.tsx
 │   │   │
 │   │   ├── contexts/
-│   │   │   ├── AuthContext.js
-│   │   │   └── LanguageContext.js
+│   │   │   ├── AuthContext.tsx
+│   │   │   └── LanguageContext.tsx
 │   │   │
 │   │   ├── hooks/
-│   │   │   ├── useAuth.js
-│   │   │   └── useLanguageActivities.js
+│   │   │   ├── useAuth.ts
+│   │   │   └── useLanguageActivities.ts
 │   │   │
 │   │   ├── services/
-│   │   │   ├── api.js
-│   │   │   ├── authService.js
-│   │   │   └── languageService.js
+│   │   │   ├── api.ts
+│   │   │   ├── authService.ts
+│   │   │   └── languageService.ts
 │   │   │
 │   │   ├── utils/
-│   │   │   ├── validation.js
-│   │   │   └── gameHelpers.js
+│   │   │   ├── validation.ts
+│   │   │   └── gameHelpers.ts
 │   │   │
-│   │   └── styles/
-│   │       ├── index.css
-│   │       ├── tailwind.css
-│   │       └── theme.css
+│   │   ├── styles/
+│   │   │   ├── index.css
+│   │   │   ├── tailwind.css
+│   │   │   └── theme.css
+│   │   │
+│   │   ├── assets/
+│   │   │   ├── react.svg
+│   │   │   └── (other static assets)
+│   │   │
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   ├── vite-env.d.ts
+│   │   └── App.css
 │   │
-│   ├── package.json
+│   ├── config/
+│   │   ├── vite.config.ts
+│   │   └── tsconfig.json
+│   │
 │   ├── .env
+│   ├── .gitignore
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── package.json
+│   ├── README.md
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
 │   └── Dockerfile
 │
 ├── database/

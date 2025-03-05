@@ -98,3 +98,12 @@
 - Develop user and developer documentation
 - Prepare initial marketing materials
 - Conduct final review and system validation
+
+## Dependencies
+- **FastAPI**: The main framework for building the backend API.
+- **Uvicorn**: ASGI server for running the FastAPI app.
+- **Pydantic**: Used for data validation and serialization.
+- **SQLAlchemy**: ORM for interacting with the database.
+- **python-jose**: JWT authentication library.
+- **Passlib**: Used for securely hashing passwords.
+- **spaCy**: For NLP processing, used in the chatbot for language tasks.
