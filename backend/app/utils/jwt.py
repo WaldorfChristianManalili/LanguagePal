@@ -4,9 +4,9 @@ from typing import Optional
 from fastapi import HTTPException, status
 
 # Configuration for JWT
-SECRET_KEY = "bf4fb0bcf16df8d0294890cf7614e4a36a7a919bd6d77b626f70a4045274deaf"  # Replace with a strong, secure key in production (e.g., from .env)
+SECRET_KEY = "bf4fb0bcf16df8d0294890cf7614e4a36a7a919bd6d77b626f70a4045274deaf"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Token expiration time
+ACCESS_TOKEN_EXPIRE_MINUTES = 60  # Token expiration time
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """

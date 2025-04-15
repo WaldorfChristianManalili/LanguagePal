@@ -2,7 +2,8 @@ from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, E
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import enum
-from ..database import Base
+from app.database import Base
+from app.models.category import Category
 
 class DifficultyLevel(enum.Enum):
     BEGINNER = "beginner"
@@ -21,7 +22,7 @@ class Sentence(Base):
     used_count = Column(Integer, default=0)  # Track how many times used
     
     # Relationships
-    category = relationship("Category", back_populates="sentences")
+    category = relationship(Category, back_populates="sentences")
     results = relationship("UserSentenceResult", back_populates="sentence")
 
 class UserSentenceResult(Base):
@@ -35,7 +36,7 @@ class UserSentenceResult(Base):
     user_answer = Column(String, nullable=False)  # User's attempted order
     is_correct = Column(Boolean, default=False)
     feedback = Column(Text, nullable=True)  # AI-generated feedback
-    is_pinned = Column(Boolean, default=False)  # For saving important results
+    is_pinned = Column(Boolean, default=False)  # For saving results
     attempted_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships

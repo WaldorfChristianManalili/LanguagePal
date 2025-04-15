@@ -1,42 +1,70 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState } from 'react';
+import Login from './components/auth/Login';
+import Register from './components/auth/Register';
 
 function App() {
-  const [message, setMessage] = useState({
-    greeting: 'Loading...',
-    description: '',
-    motivation: ''
-  });
+  const [token, setToken] = useState<string | null>(null);
+  const [showLogin, setShowLogin] = useState(true);
 
-  useEffect(() => {
-    const fetchMessage = async () => {
-      try {
-        const response = await axios.get('http://localhost:8000/hello');
-        setMessage(response.data);
-      } catch (error) {
-        setMessage({
-          greeting: 'Error fetching message',
-          description: 'Could not connect to backend',
-          motivation: 'Check your server connection'
-        });
-      }
-    };
+  const handleLogin = (token: string) => {
+    setToken(token);
+    localStorage.setItem('token', token); // Persist token
+  };
 
-    fetchMessage();
-  }, []);
+  const handleRegister = () => {
+    setShowLogin(true); // Switch to login after registration
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    localStorage.removeItem('token');
+  };
+
+  if (!token) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-100 to-blue-200">
+        {showLogin ? (
+          <>
+            <Login onLogin={handleLogin} />
+            <p className="mt-4 text-gray-600">
+              Don’t have an account?{' '}
+              <button
+                onClick={() => setShowLogin(false)}
+                className="text-blue-600 hover:underline"
+              >
+                Register
+              </button>
+            </p>
+          </>
+        ) : (
+          <>
+            <Register onRegister={handleRegister} />
+            <p className="mt-4 text-gray-600">
+              Already have an account?{' '}
+              <button
+                onClick={() => setShowLogin(true)}
+                className="text-blue-600 hover:underline"
+              >
+                Login
+              </button>
+            </p>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-100 to-blue-200">
       <div className="text-center p-8 bg-white rounded-xl shadow-2xl">
-        <h1 className="text-4xl font-bold text-blue-600 mb-4">
-          {message.greeting}
-        </h1>
-        <p className="text-xl text-gray-700 mb-2">
-          {message.description}
-        </p>
-        <p className="italic text-green-600">
-          {message.motivation}
-        </p>
+        <h1 className="text-4xl font-bold text-blue-600 mb-4">Welcome!</h1>
+        <p className="text-xl text-gray-700 mb-2">You are logged in.</p>
+        <button
+          onClick={handleLogout}
+          className="mt-4 bg-red-600 text-white p-2 rounded hover:bg-red-700"
+        >
+          Logout
+        </button>
       </div>
     </div>
   );
