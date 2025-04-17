@@ -1,70 +1,41 @@
-import jwt
+import os
 from datetime import datetime, timedelta
-from typing import Optional
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from dotenv import load_dotenv
 
-# Configuration for JWT
-SECRET_KEY = "bf4fb0bcf16df8d0294890cf7614e4a36a7a919bd6d77b626f70a4045274deaf"
+# Load environment variables from .env file
+load_dotenv()
+
+# Constants from env
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60  # Token expiration time
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """
-    Create a JWT access token.
-    
-    Args:
-        data: Dictionary containing the payload (e.g., user ID or username).
-        expires_delta: Optional custom expiration time. Defaults to ACCESS_TOKEN_EXPIRE_MINUTES.
-    
-    Returns:
-        Encoded JWT token as a string.
-    """
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def decode_access_token(token: str) -> dict:
-    """
-    Decode and verify a JWT access token.
-    
-    Args:
-        token: The JWT token to decode.
-    
-    Returns:
-        Decoded payload as a dictionary.
-    
-    Raises:
-        HTTPException: If the token is invalid or expired.
-    """
+def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
+        user_id_str: str = payload.get("sub")
+        if user_id_str is None:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        try:
+            user_id = int(user_id_str)  # Convert string to integer
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Invalid user ID in token")
+        return user_id
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-def get_current_user(token: str) -> dict:
-    """
-    Get the current user from a JWT token.
-    
-    Args:
-        token: The JWT token from the Authorization header.
-    
-    Returns:
-        Decoded payload containing user information.
-    """
-    return decode_access_token(token)

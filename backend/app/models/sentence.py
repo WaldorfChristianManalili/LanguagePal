@@ -1,29 +1,31 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean, Enum, Text
-from sqlalchemy.sql import func
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
-import enum
 from app.database import Base
-from app.models.category import Category
-
-class DifficultyLevel(enum.Enum):
-    BEGINNER = "beginner"
-    INTERMEDIATE = "intermediate"
-    ADVANCED = "advanced"
+from datetime import datetime
 
 class Sentence(Base):
     __tablename__ = "sentences"
     
     id = Column(Integer, primary_key=True, index=True)
-    text = Column(String, nullable=False)  # Original sentence in English
-    difficulty = Column(Enum(DifficultyLevel), nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    last_used_at = Column(DateTime(timezone=True), nullable=True)  # Track when last used
-    used_count = Column(Integer, default=0)  # Track how many times used
+    text = Column(String, nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime)
+    used_count = Column(Integer, default=0)
     
-    # Relationships
-    category = relationship(Category, back_populates="sentences")
-    results = relationship("UserSentenceResult", back_populates="sentence")
+    # Add relationship
+    category = relationship("Category", back_populates="sentences")
+
+class SentenceTranslation(Base):
+    __tablename__ = "sentence_translations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sentence_id = Column(Integer, ForeignKey("sentences.id"), nullable=False)
+    language = Column(String, nullable=False)
+    translated_text = Column(String, nullable=False)
+    translated_words = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class UserSentenceResult(Base):
     __tablename__ = "user_sentence_results"
@@ -31,14 +33,12 @@ class UserSentenceResult(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     sentence_id = Column(Integer, ForeignKey("sentences.id"), nullable=False)
-    translated_sentence = Column(String, nullable=False)  # Sentence translated to user's language
-    scrambled_order = Column(String, nullable=False)  # How it was scrambled
-    user_answer = Column(String, nullable=False)  # User's attempted order
-    is_correct = Column(Boolean, default=False)
-    feedback = Column(Text, nullable=True)  # AI-generated feedback
-    is_pinned = Column(Boolean, default=False)  # For saving results
-    attempted_at = Column(DateTime(timezone=True), server_default=func.now())
+    translated_sentence = Column(String, nullable=False)
+    user_answer = Column(String, nullable=False)
+    is_correct = Column(Boolean, nullable=False)
+    feedback = Column(String, nullable=False)
+    is_pinned = Column(Boolean, default=False)
+    attempted_at = Column(DateTime, default=datetime.utcnow)
     
-    # Relationships
+    # Fixed relationship
     user = relationship("User", back_populates="sentence_results")
-    sentence = relationship("Sentence", back_populates="results")

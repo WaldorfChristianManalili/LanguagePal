@@ -1,79 +1,147 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update, func  # Add func import
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.sentence import Sentence as SentenceModel, UserSentenceResult as UserSentenceResultModel, DifficultyLevel
-from app.models.user import User as UserModel
-from app.schemas.sentence import Sentence, UserSentenceResult, UserSentenceResultCreate
+from sqlalchemy import select
+from datetime import datetime
+from app.models.sentence import Sentence, SentenceTranslation, UserSentenceResult
+from app.models.user import User
+from app.models.category import Category
+from app.schemas.sentence import SentenceResponse, SubmitSentenceRequest, SubmitSentenceResponse
 from app.database import get_db
 from app.utils.openai import translate_sentence
-from random import choice, shuffle
+from app.utils.jwt import get_current_user
+from random import shuffle
+import logging
 
-router = APIRouter()
+router = APIRouter(tags=["sentence"])
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-@router.get("/sentence/{difficulty}", response_model=Sentence)
-async def get_sentence(difficulty: DifficultyLevel, user_id: int, db: AsyncSession = Depends(get_db)):
-    # Fetch user's language
-    user = (await db.execute(select(UserModel).filter(UserModel.id == user_id))).scalars().first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+@router.get("/scramble", response_model=SentenceResponse)
+async def get_scrambled_sentence(
+    category: str,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    logger.debug(f"Fetching sentence for category: {category}, user_id: {user_id}")
     
-    # Get unused sentences for the difficulty level
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        logger.error(f"User not found: {user_id}")
+        raise HTTPException(status_code=404, detail="User not found")
+    user_language = user.learning_language
+    logger.debug(f"User language: {user_language}")
+
     result = await db.execute(
-        select(SentenceModel).filter(
-            SentenceModel.difficulty == difficulty,
-            SentenceModel.used_count == 0
-        )
+        select(Sentence).join(Sentence.category).filter(Category.name == category)
     )
     sentences = result.scalars().all()
-    
-    if not sentences:
-        # Reset all sentences if none are unused
-        await db.execute(update(SentenceModel).values(used_count=0))
-        await db.commit()
-        result = await db.execute(select(SentenceModel).filter(SentenceModel.difficulty == difficulty))
-        sentences = result.scalars().all()
-    
-    sentence = choice(sentences)
-    translated = await translate_sentence(sentence.text, user.learning_language)
-    
-    # Scramble the sentence
-    words = sentence.text.split()
-    shuffle(words)
-    scrambled = " ".join(words)
-    
-    # Mark as used
-    sentence.used_count += 1
-    sentence.last_used_at = func.now()
-    await db.commit()
-    await db.refresh(sentence)
-    
-    return {**sentence.__dict__, "translated": translated, "scrambled": scrambled}
 
-@router.post("/sentence/submit", response_model=UserSentenceResult)
-async def submit_sentence(result: UserSentenceResultCreate, db: AsyncSession = Depends(get_db)):
-    # Verify sentence exists
-    sentence = (await db.execute(select(SentenceModel).filter(SentenceModel.id == result.sentence_id))).scalars().first()
-    if not sentence:
-        raise HTTPException(status_code=404, detail="Sentence not found")
-    
-    # Check correctness
-    is_correct = result.user_answer.strip() == sentence.text.strip()
-    feedback = await translate_sentence(
-        f"The correct answer is '{sentence.text}'. Your answer was {'correct' if is_correct else 'incorrect'}.",
-        (await db.execute(select(UserModel).filter(UserModel.id == result.user_id))).scalars().first().learning_language
-    ) if is_correct else "Try again with proper word order."
-    
-    # Save result
-    db_result = UserSentenceResultModel(**result.dict(), is_correct=is_correct, feedback=feedback)
-    db.add(db_result)
-    
-    # Limit to 200 results, remove oldest unpinned
-    results = (await db.execute(select(UserSentenceResultModel).filter(UserSentenceResultModel.user_id == result.user_id).order_by(UserSentenceResultModel.attempted_at))).scalars().all()
-    if len(results) > 200:
-        for old_result in results[:-200]:
-            if not old_result.is_pinned:
-                await db.delete(old_result)
-    
+    if not sentences:
+        logger.error(f"No sentences found for category: {category}")
+        raise HTTPException(status_code=404, detail="No sentences available for this category")
+
+    sentence = min(sentences, key=lambda s: (s.used_count, s.last_used_at or datetime.min))
+    logger.debug(f"Selected sentence: {sentence.text}, id: {sentence.id}")
+
+    result = await db.execute(
+        select(SentenceTranslation).filter(
+            SentenceTranslation.sentence_id == sentence.id,
+            SentenceTranslation.language == user_language
+        )
+    )
+    translation = result.scalars().first()
+    if translation:
+        translated_words = translation.translated_words
+        translated_text = translation.translated_text
+        logger.debug(f"Using cached translation: {translated_text}")
+    else:
+        logger.debug(f"Translating '{sentence.text}' to {user_language}")
+        translation_result = await translate_sentence(sentence.text, user_language)
+        
+        logger.debug(f"Translation result: {translation_result}")
+        if not isinstance(translation_result, dict) or "words" not in translation_result or "sentence" not in translation_result:
+            logger.error(f"Invalid translation result format: {translation_result}")
+            raise HTTPException(status_code=500, detail="Invalid translation response")
+        
+        translated_words = [word.strip() for word in translation_result["words"] if word.strip() not in [",", "，"]]
+        translated_text = translation_result["sentence"].strip().rstrip(",").rstrip("，")
+        if "error" in translated_text.lower():
+            logger.error("Translation service unavailable")
+            raise HTTPException(status_code=500, detail="Translation service unavailable")
+        
+        new_translation = SentenceTranslation(
+            sentence_id=sentence.id,
+            language=user_language,
+            translated_text=translated_text,
+            translated_words=translated_words
+        )
+        db.add(new_translation)
+        await db.commit()
+        logger.debug(f"Cached translation: {translated_text}")
+
+    shuffled_words = translated_words.copy()
+    shuffle(shuffled_words)
+
+    sentence.used_count += 1
+    sentence.last_used_at = datetime.utcnow()
+    db.add(sentence)
     await db.commit()
-    await db.refresh(db_result)
-    return db_result
+
+    if all(s.used_count > 10 for s in sentences):
+        logger.debug("Resetting used_count for all sentences")
+        for s in sentences:
+            s.used_count = 0
+        db.add_all(sentences)
+        await db.commit()
+
+    logger.debug(f"Returning scrambled sentence: {shuffled_words}")
+    return {
+        "scrambled_words": shuffled_words,
+        "original_sentence": translated_text,
+        "sentence_id": sentence.id,
+    }
+
+@router.post("/submit", response_model=SubmitSentenceResponse)
+async def submit_sentence(
+    request: SubmitSentenceRequest,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    logger.debug(f"Submitting sentence: {request.constructed_sentence}, user_id: {user_id}, original: {request.original_sentence}")
+    
+    result = await db.execute(select(Sentence).filter(Sentence.id == request.sentence_id))
+    sentence = result.scalars().first()
+    if not sentence:
+        logger.error(f"Sentence not found: {request.sentence_id}")
+        raise HTTPException(status_code=404, detail="Sentence not found")
+
+    # Normalize by removing spaces, commas, and extra punctuation
+    constructed_sentence = request.constructed_sentence.strip().replace(" ", "").replace(",", "").replace("，", "")
+    original_sentence = request.original_sentence.strip().replace(" ", "").replace(",", "").replace("，", "")
+    
+    is_correct = constructed_sentence.lower() == original_sentence.lower()
+    feedback = "Correct!" if is_correct else f"Incorrect. The correct sentence is: {request.original_sentence}"
+
+    result = UserSentenceResult(
+        user_id=user_id,
+        sentence_id=request.sentence_id,
+        translated_sentence=original_sentence,
+        user_answer=constructed_sentence,
+        is_correct=is_correct,
+        feedback=feedback,
+        is_pinned=False,
+        attempted_at=datetime.utcnow(),
+    )
+    db.add(result)
+    await db.commit()
+    await db.refresh(result)
+
+    logger.debug(f"Submission result: is_correct={is_correct}, result_id={result.id}, normalized: {constructed_sentence} vs {original_sentence}")
+    return {
+        "is_correct": is_correct,
+        "feedback": feedback,
+        "correct_sentence": original_sentence if not is_correct else "",
+        "result_id": result.id,
+        "is_pinned": result.is_pinned,
+    }

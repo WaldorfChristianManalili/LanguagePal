@@ -63,41 +63,36 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    logger.debug(f"Login attempt: username={form_data.username}")
-    
     # Verify user credentials
     result = await db.execute(select(UserModel).filter(UserModel.username == form_data.username))
     user = result.scalars().first()
-    if not user:
-        logger.error(f"User not found: username={form_data.username}")
+    if not user or not pwd_context.verify(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    logger.debug(f"User found: username={user.username}, hashed_password={user.hashed_password}")
-    if not pwd_context.verify(form_data.password, user.hashed_password):
-        logger.error(f"Password verification failed for username={form_data.username}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    logger.debug(f"Login successful: username={user.username}")
-    # Generate JWT token
-    access_token = create_access_token(data={"sub": user.username})
+    # Generate JWT token with user.id
+    access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/users/{username}", response_model=User)
 async def get_user(
     username: str,
     db: AsyncSession = Depends(get_db),
-    token: str = Depends(oauth2_scheme)  # Require JWT token
+    token: str = Depends(oauth2_scheme)
 ):
+    logger.debug(f"Received token: {token}")
+    
     # Verify token and get current user
-    payload = get_current_user(token)
+    try:
+        payload = get_current_user(token)
+    except HTTPException as e:
+        logger.error(f"Error decoding token: {str(e.detail)}")
+        raise e
+
+    logger.debug(f"Decoded payload: {payload}")
     token_username = payload.get("sub")
     if token_username != username:
         raise HTTPException(status_code=403, detail="Not authorized to access this user")

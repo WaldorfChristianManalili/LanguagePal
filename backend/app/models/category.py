@@ -7,8 +7,7 @@ class Category(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
-    description = Column(String, nullable=True)
-    
+
     # Relationships - used to organize different types of content
     sentences = relationship("Sentence", back_populates="category")
     words = relationship("Word", back_populates="category")

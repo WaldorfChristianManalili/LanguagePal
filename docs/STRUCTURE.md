@@ -76,9 +76,8 @@ languagepal/
 │   │   │       ├── Card.tsx         # Reusable card component
 │   │   │       └── PinnedToggle.tsx # Reusable toggle for pinning results
 │   │   ├── pages/
-│   │   │   ├── Home.tsx             # Dashboard with feature selection
-│   │   │   ├── Login.tsx            # Login page
-│   │   │   ├── Register.tsx         # Registration page
+│   │   │   ├── Home.tsx             # Home page with login and register
+│   │   │   ├── Dashboard.tsx        # Dashboard with feature selection after login
 │   │   │   ├── SentenceConstruction.tsx # Dedicated page for Sentence Construction
 │   │   │   ├── Flashcards.tsx       # Dedicated page for Flashcards
 │   │   │   ├── WordOfTheDay.tsx     # Dedicated page for Word of the Day

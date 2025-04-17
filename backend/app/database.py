@@ -3,16 +3,18 @@ from sqlalchemy.ext.declarative import declarative_base
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+# Load environment variables
 load_dotenv()
 
-# Get the database URL from environment variables
+# Get database URL
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not set in .env")
 
-# Create the async SQLAlchemy engine
-engine = create_async_engine(DATABASE_URL, echo=True)  # echo=True for debug logging
+# Create async engine
+engine = create_async_engine(DATABASE_URL, echo=True)
 
-# Create an async session factory
+# Create session factory
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -24,7 +26,7 @@ AsyncSessionLocal = async_sessionmaker(
 # Base class for models
 Base = declarative_base()
 
-# Dependency to get an async DB session
+# Dependency for FastAPI routes
 async def get_db():
     async with AsyncSessionLocal() as db:
         yield db

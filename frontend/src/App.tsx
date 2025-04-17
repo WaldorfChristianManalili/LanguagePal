@@ -1,72 +1,104 @@
-import React, { useState } from 'react';
-import Login from './components/auth/Login';
-import Register from './components/auth/Register';
+import { useState, useEffect, createContext, useContext } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Home from './pages/Home';
+import Dashboard from './pages/Dashboard';
+import Register from './components/Auth/Register';
+import SentenceConstruction from './pages/SentenceConstruction';
+import Flashcards from './pages/Flashcards';
+import WordOfTheDay from './pages/WordOfTheDay';
+import Dialogues from './pages/Dialogues';
+import Review from './pages/Review';
+
+// Auth context to manage token
+interface AuthContextType {
+  token: string | null;
+  setToken: (token: string | null) => void;
+  username?: string; // Optional, as username may not be available
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
 
 function App() {
   const [token, setToken] = useState<string | null>(null);
-  const [showLogin, setShowLogin] = useState(true);
+  const [username, setUsername] = useState<string | undefined>(undefined);
 
-  const handleLogin = (token: string) => {
-    setToken(token);
-    localStorage.setItem('token', token); // Persist token
-  };
+  // Check for token in localStorage on mount
+  useEffect(() => {
+    const storedToken = localStorage.getItem('token');
+    if (storedToken) {
+      setToken(storedToken);
+      // Optionally fetch username from backend using token
+      // Example: fetchUsername(storedToken).then(setUsername);
+    }
+  }, []);
 
-  const handleRegister = () => {
-    setShowLogin(true); // Switch to login after registration
+  const handleLogin = (newToken: string) => {
+    setToken(newToken);
+    localStorage.setItem('token', newToken);
+    // Optionally set username if provided by Login component
+    // setUsername(username);
   };
 
   const handleLogout = () => {
     setToken(null);
+    setUsername(undefined);
     localStorage.removeItem('token');
   };
 
-  if (!token) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-100 to-blue-200">
-        {showLogin ? (
-          <>
-            <Login onLogin={handleLogin} />
-            <p className="mt-4 text-gray-600">
-              Don’t have an account?{' '}
-              <button
-                onClick={() => setShowLogin(false)}
-                className="text-blue-600 hover:underline"
-              >
-                Register
-              </button>
-            </p>
-          </>
-        ) : (
-          <>
-            <Register onRegister={handleRegister} />
-            <p className="mt-4 text-gray-600">
-              Already have an account?{' '}
-              <button
-                onClick={() => setShowLogin(true)}
-                className="text-blue-600 hover:underline"
-              >
-                Login
-              </button>
-            </p>
-          </>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-100 to-blue-200">
-      <div className="text-center p-8 bg-white rounded-xl shadow-2xl">
-        <h1 className="text-4xl font-bold text-blue-600 mb-4">Welcome!</h1>
-        <p className="text-xl text-gray-700 mb-2">You are logged in.</p>
-        <button
-          onClick={handleLogout}
-          className="mt-4 bg-red-600 text-white p-2 rounded hover:bg-red-700"
-        >
-          Logout
-        </button>
-      </div>
-    </div>
+    <AuthContext.Provider value={{ token, setToken, username }}>
+      <Router>
+        <Routes>
+          <Route
+            path="/"
+            element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} />}
+          />
+          <Route
+            path="/login"
+            element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} />}
+          />
+          <Route path="/register" element={<Register onRegister={() => {}} />} />
+          <Route
+            path="/dashboard"
+            element={
+              token ? (
+                <Dashboard onLogout={handleLogout} username={username} />
+              ) : (
+                <Navigate to="/" />
+              )
+            }
+          />
+          <Route
+            path="/sentence-construction"
+            element={token ? <SentenceConstruction /> : <Navigate to="/" />}
+          />
+          <Route
+            path="/flashcards"
+            element={token ? <Flashcards /> : <Navigate to="/" />}
+          />
+          <Route
+            path="/word-of-the-day"
+            element={token ? <WordOfTheDay /> : <Navigate to="/" />}
+          />
+          <Route
+            path="/dialogues"
+            element={token ? <Dialogues /> : <Navigate to="/" />}
+          />
+          <Route
+            path="/review"
+            element={token ? <Review /> : <Navigate to="/" />}
+          />
+        </Routes>
+      </Router>
+    </AuthContext.Provider>
   );
 }
 
