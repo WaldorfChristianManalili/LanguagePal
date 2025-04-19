@@ -7,14 +7,16 @@ import Register from '../components/Auth/Register';
 
 interface HomeProps {
   onLogin: (token: string) => void;
+  onRegister: (
+    email: string,
+    username: string,
+    password: string,
+    learning_language: string
+  ) => Promise<void>;
 }
 
-function Home({ onLogin }: HomeProps) {
+function Home({ onLogin, onRegister }: HomeProps) {
   const [showLogin, setShowLogin] = useState(true);
-
-  const handleRegister = () => {
-    setShowLogin(true); // Switch to login after registration
-  };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-r from-blue-100 to-blue-200">
@@ -43,7 +45,7 @@ function Home({ onLogin }: HomeProps) {
             </>
           ) : (
             <>
-              <Register onRegister={handleRegister} />
+              <Register onRegister={onRegister} />
               <p className="mt-4 text-gray-600">
                 Already have an account?{' '}
                 <button

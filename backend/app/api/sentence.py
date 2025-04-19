@@ -45,6 +45,7 @@ async def get_scrambled_sentence(
     sentence = min(sentences, key=lambda s: (s.used_count, s.last_used_at or datetime.min))
     logger.debug(f"Selected sentence: {sentence.text}, id: {sentence.id}")
 
+    # Check for existing translation
     result = await db.execute(
         select(SentenceTranslation).filter(
             SentenceTranslation.sentence_id == sentence.id,
@@ -64,7 +65,6 @@ async def get_scrambled_sentence(
         logger.debug(f"Translating '{sentence.text}' to {user_language}")
         translation_result = await translate_sentence(sentence.text, user_language)
         
-        logger.debug(f"Translation result: {translation_result}")
         if not isinstance(translation_result, dict) or not all(key in translation_result for key in ["words", "sentence", "hints", "explanation"]):
             logger.error(f"Invalid translation result format: {translation_result}")
             raise HTTPException(status_code=500, detail="Invalid translation response")
@@ -72,25 +72,41 @@ async def get_scrambled_sentence(
         translated_words = [word.strip() for word in translation_result["words"] if word.strip() not in [",", "，"]]
         translated_text = translation_result["sentence"].strip().rstrip(",").rstrip("，")
         hints = translation_result["hints"] or []
-        if not hints:
-            logger.warning(f"No hints provided by translation: {translation_result}")
         hint_texts = [hint["text"] for hint in hints if isinstance(hint, dict) and "text" in hint]
         explanation = translation_result["explanation"]
         if "error" in translated_text.lower():
             logger.error("Translation service unavailable")
             raise HTTPException(status_code=500, detail="Translation service unavailable")
         
-        new_translation = SentenceTranslation(
-            sentence_id=sentence.id,
-            language=user_language,
-            translated_text=translated_text,
-            translated_words=translated_words,
-            hints=hint_texts,  # Store hint texts
-            explanation=explanation
+        # Check again before inserting to avoid race conditions
+        result = await db.execute(
+            select(SentenceTranslation).filter(
+                SentenceTranslation.sentence_id == sentence.id,
+                SentenceTranslation.language == user_language
+            )
         )
-        db.add(new_translation)
-        await db.commit()
-        logger.debug(f"Cached translation: {translated_text}, hints: {hints}, explanation: {explanation}")
+        translation = result.scalars().first()
+        if not translation:
+            new_translation = SentenceTranslation(
+                sentence_id=sentence.id,
+                language=user_language,
+                translated_text=translated_text,
+                translated_words=translated_words,
+                hints=hint_texts,
+                explanation=explanation
+            )
+            db.add(new_translation)
+            await db.commit()
+            translation = new_translation
+            logger.debug(f"Cached translation: {translated_text}, hints: {hints}, explanation: {explanation}")
+        else:
+            logger.debug(f"Translation already exists: {translation.translated_text}")
+            translated_words = translation.translated_words
+            translated_text = translation.translated_text
+            hints = [
+                {"text": hint, "usefulness": max(3 - i, 1)}
+                for i, hint in enumerate(translation.hints or [])
+            ]
 
     shuffled_words = translated_words.copy()
     shuffle(shuffled_words)
@@ -124,7 +140,16 @@ async def submit_sentence(
 ):
     logger.debug(f"Submitting sentence: user_answer='{request.user_answer}', original='{request.original_sentence}', sentence_id={request.sentence_id}")
     
-    # Fetch the sentence
+    # Fetch user
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        logger.error(f"User not found: {user_id}")
+        raise HTTPException(status_code=404, detail="User not found")
+    user_language = user.learning_language
+    logger.debug(f"User language: {user_language}")
+
+    # Fetch sentence
     query = select(Sentence).where(Sentence.id == request.sentence_id)
     result = await db.execute(query)
     sentence = result.scalar_one_or_none()
@@ -132,42 +157,31 @@ async def submit_sentence(
         logger.error(f"Sentence not found for ID: {request.sentence_id}")
         raise HTTPException(status_code=404, detail="Sentence not found")
 
-    # Fetch the translation
+    # Fetch translation
     query = select(SentenceTranslation).where(
-        SentenceTranslation.sentence_id == request.sentence_id
+        SentenceTranslation.sentence_id == request.sentence_id,
+        SentenceTranslation.language == user_language
     )
     result = await db.execute(query)
     translation = result.scalar_one_or_none()
     if not translation:
-        logger.error(f"Translation not found for sentence ID: {request.sentence_id}")
-        raise HTTPException(status_code=404, detail="Translation not found")
-
-    # Fetch user to determine language
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalars().first()
-    if not user:
-        logger.error(f"User not found: {user_id}")
-        raise HTTPException(status_code=404, detail="User not found")
-    is_japanese = user.learning_language == 'Japanese'
+        logger.error(f"Translation not found for sentence ID: {request.sentence_id}, language: {user_language}")
+        raise HTTPException(status_code=404, detail="Translation not found for this language")
 
     # Normalize user answer and translated text
+    is_japanese = user_language == 'Japanese'
     def normalize_text(text: str, is_japanese: bool = False) -> str:
-        # Replace full-width spaces and other whitespace with regular space
         text = text.replace('\u3000', ' ').replace('\t', ' ').replace('\n', ' ')
-        # Remove punctuation and normalize spaces
-        text = text.strip().replace(',', '').replace('.', '').replace('!', '').replace('?', '')
+        text = text.strip().replace(',', '').replace('.', '').replace('!', '').replace('?','')
         if is_japanese:
-            # Remove all spaces for Japanese text
             text = ''.join(text.split())
         else:
-            # Preserve single spaces for other languages
             text = ' '.join(text.split())
-        return text.lower()  # Lowercase for consistency (no effect on Japanese)
+        return text.lower()
 
     user_answer_normalized = normalize_text(request.user_answer, is_japanese)
     translated_text_normalized = normalize_text(translation.translated_text, is_japanese)
     
-    # Log raw bytes and normalized strings for debugging
     logger.debug(f"User answer raw: '{request.user_answer}', bytes: {[ord(c) for c in request.user_answer]}")
     logger.debug(f"Translated text raw: '{translation.translated_text}', bytes: {[ord(c) for c in translation.translated_text]}")
     logger.debug(f"Comparison: user_answer_normalized='{user_answer_normalized}', translated_text_normalized='{translated_text_normalized}', is_correct={user_answer_normalized == translated_text_normalized}")
@@ -180,21 +194,41 @@ async def submit_sentence(
         else f"Incorrect. The correct sentence is: {translation.translated_text}"
     )
 
-    # Save the result
-    result = UserSentenceResult(
-        user_id=user_id,
-        sentence_id=request.sentence_id,
-        translated_sentence=translation.translated_text,
-        user_answer=request.user_answer,
-        is_correct=is_correct,
-        feedback=feedback,
-        is_pinned=False
+    # Check for existing submission
+    existing_result = await db.execute(
+        select(UserSentenceResult).where(
+            UserSentenceResult.user_id == user_id,
+            UserSentenceResult.sentence_id == request.sentence_id
+        )
     )
-    db.add(result)
+    result = existing_result.scalars().first()
+    if result:
+        # Update existing result
+        logger.debug(f"Updating existing UserSentenceResult: user_id={user_id}, sentence_id={request.sentence_id}")
+        result.user_answer = request.user_answer
+        result.is_correct = is_correct
+        result.feedback = feedback
+        result.translated_sentence = translation.translated_text
+        result.attempted_at = datetime.utcnow()
+        # Preserve is_pinned state
+    else:
+        # Create new result
+        logger.debug(f"Creating new UserSentenceResult: user_id={user_id}, sentence_id={request.sentence_id}")
+        result = UserSentenceResult(
+            user_id=user_id,
+            sentence_id=request.sentence_id,
+            translated_sentence=translation.translated_text,
+            user_answer=request.user_answer,
+            is_correct=is_correct,
+            feedback=feedback,
+            is_pinned=False,
+            attempted_at=datetime.utcnow()
+        )
+        db.add(result)
+
     await db.commit()
     await db.refresh(result)
 
-    # Construct response manually for logging
     response_dict = {
         "is_correct": result.is_correct,
         "feedback": result.feedback,
@@ -207,15 +241,7 @@ async def submit_sentence(
     }
     logger.debug(f"Submit response: {response_dict}")
     
-    return SubmitSentenceResponse(
-        is_correct=result.is_correct,
-        feedback=result.feedback,
-        translated_sentence=result.translated_sentence,
-        result_id=result.id,
-        explanation=translation.explanation,
-        sentence_id=result.sentence_id,
-        user_answer=result.user_answer
-    )
+    return SubmitSentenceResponse(**response_dict)
 
 @router.patch("/result/{result_id}/pin")
 async def toggle_pin(
@@ -224,20 +250,17 @@ async def toggle_pin(
     user_id: int = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    logger.debug(f"toggle_pin: Received request: result_id={result_id}, payload={pin_data}")
     query = select(UserSentenceResult).where(
         UserSentenceResult.id == result_id,
         UserSentenceResult.user_id == user_id
     )
     result = await db.execute(query)
-    sentence_result = result.scalar_one_or_none()
+    sentence_result = result.scalar_one()  # Expect exactly one result
     if not sentence_result:
-        logger.error(f"toggle_pin: Result not found for result_id={result_id}")
         raise HTTPException(status_code=404, detail="Result not found")
 
     sentence_id = sentence_result.sentence_id
     if not sentence_id:
-        logger.error(f"toggle_pin: No sentence_id for result_id={result_id}")
         raise HTTPException(status_code=400, detail="sentence_id required")
 
     # Fetch all results for this sentence_id
@@ -253,21 +276,25 @@ async def toggle_pin(
         for other_result in all_results:
             if other_result.id != result_id:
                 other_result.is_pinned = False
-                logger.debug(f"toggle_pin: Unpinned result_id={other_result.id}")
         sentence_result.is_pinned = True
     else:
         # Unpin all results for this sentence
         for other_result in all_results:
             other_result.is_pinned = False
-            logger.debug(f"toggle_pin: Unpinned result_id={other_result.id}")
 
     await db.commit()
     await db.refresh(sentence_result)
-    logger.debug(f"toggle_pin: result_id={result_id}, sentence_id={sentence_id}, is_pinned={sentence_result.is_pinned}")
     return {"is_pinned": sentence_result.is_pinned}
 
 @router.get("/results/pinned", response_model=List[SubmitSentenceResponse])
 async def get_pinned_results(user_id: int = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Fetch user to get learning_language
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_language = user.learning_language
+
     query = select(UserSentenceResult).where(
         UserSentenceResult.user_id == user_id,
         UserSentenceResult.is_pinned
@@ -277,12 +304,13 @@ async def get_pinned_results(user_id: int = Depends(get_current_user), db: Async
     responses = []
     for r in pinned_results:
         query = select(SentenceTranslation).where(
-            SentenceTranslation.sentence_id == r.sentence_id
+            SentenceTranslation.sentence_id == r.sentence_id,
+            SentenceTranslation.language == user_language
         )
         translation_result = await db.execute(query)
         translation = translation_result.scalar_one_or_none()
         if not translation:
-            logger.error(f"Translation not found for sentence_id: {r.sentence_id}")
+            logger.warning(f"Translation not found for sentence_id: {r.sentence_id}, language: {user_language}")
             continue
         responses.append(
             SubmitSentenceResponse(
@@ -296,5 +324,5 @@ async def get_pinned_results(user_id: int = Depends(get_current_user), db: Async
                 user_answer=r.user_answer
             )
         )
-    print(f"Pinned results returned: {len(responses)}")
+    logger.debug(f"Pinned results returned: {len(responses)}")
     return responses

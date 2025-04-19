@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Card } from '../components/Common/Card';
 import { Button } from '../components/Common/Button';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
-import { useAuth } from '../App'; // Import useAuth to access token
+import { useAuth } from '../App';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -18,9 +18,7 @@ function Dashboard({ onLogout, username = 'User' }: DashboardProps) {
     if (!loading && !token) {
       console.log('No token found, logging out');
       onLogout();
-      navigate('/', { replace: true });
-    } else if (!loading) {
-      console.log('Token found, staying on dashboard');
+      navigate('/login', { replace: true });
     }
   }, [navigate, onLogout, token, loading]);
 

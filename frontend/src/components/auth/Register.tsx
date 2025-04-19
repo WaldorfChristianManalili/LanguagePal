@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 
 interface RegisterProps {
-  onRegister: () => void; // Callback to switch to login after registration
+  onRegister: (
+    email: string,
+    username: string,
+    password: string,
+    learning_language: string
+  ) => Promise<void>;
 }
 
 const Register: React.FC<RegisterProps> = ({ onRegister }) => {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [learningLanguage, setLearningLanguage] = useState('Spanish'); // Default language
+  const [learningLanguage, setLearningLanguage] = useState('Spanish');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -19,13 +23,7 @@ const Register: React.FC<RegisterProps> = ({ onRegister }) => {
     setError('');
 
     try {
-      await axios.post('http://localhost:8000/auth/register', {
-        username,
-        email,
-        password,
-        learning_language: learningLanguage,
-      });
-      onRegister(); // Switch to login after successful registration
+      await onRegister(email, username, password, learningLanguage);
     } catch (err) {
       setError('Registration failed. Username or email may already exist.');
     } finally {
@@ -78,7 +76,6 @@ const Register: React.FC<RegisterProps> = ({ onRegister }) => {
             <option value="French">French</option>
             <option value="German">German</option>
             <option value="Japanese">Japanese</option>
-            {/* Add more languages as needed */}
           </select>
         </div>
         {error && <p className="text-red-500 mb-4">{error}</p>}

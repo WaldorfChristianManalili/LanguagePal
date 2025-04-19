@@ -9,7 +9,7 @@ import WordOfTheDay from './pages/WordOfTheDay';
 import Dialogues from './pages/Dialogues';
 import Review from './pages/Review';
 import LoadingSpinner from './components/Common/LoadingSpinner';
-import { validateToken } from './api/auth';
+import { validateToken, login, signup } from './api/auth';
 
 interface AuthContextType {
   token: string | null;
@@ -38,10 +38,9 @@ function App() {
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
         try {
-          const response = await validateToken(storedToken);
+          const user = await validateToken(storedToken);
           setToken(storedToken);
-          setUsername(response.username || 'User');
-          console.log('Token validated, username:', response.username);
+          setUsername(user.username);
         } catch (error) {
           console.error('Token validation failed:', error);
           setToken(null);
@@ -52,12 +51,66 @@ function App() {
       setLoading(false);
     };
     checkToken();
+
+    // Periodic token validation
+    const interval = setInterval(async () => {
+      const storedToken = localStorage.getItem('token');
+      if (storedToken) {
+        try {
+          await validateToken(storedToken);
+        } catch (error) {
+          console.error('Periodic token validation failed:', error);
+          setToken(null);
+          setUsername(undefined);
+          localStorage.removeItem('token');
+        }
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
   }, []);
 
-  const handleLogin = (newToken: string, newUsername?: string) => {
-    setToken(newToken);
-    setUsername(newUsername || 'User');
-    localStorage.setItem('token', newToken);
+  const handleLogin = async (token: string) => {
+    try {
+      setLoading(true);
+      localStorage.setItem('token', token);
+      const user = await validateToken(token);
+      setToken(token);
+      setUsername(user.username);
+    } catch (error) {
+      console.error('Login failed:', error);
+      setToken(null);
+      setUsername(undefined);
+      localStorage.removeItem('token');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async (
+    email: string,
+    username: string,
+    password: string,
+    learning_language: string
+  ) => {
+    try {
+      setLoading(true);
+      await signup(email, username, password, learning_language);
+      const { access_token } = await login(username, password);
+      localStorage.setItem('token', access_token);
+      const user = await validateToken(access_token);
+      setToken(access_token);
+      setUsername(user.username);
+    } catch (error) {
+      console.error('Registration failed:', error);
+      setToken(null);
+      setUsername(undefined);
+      localStorage.removeItem('token');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -76,15 +129,15 @@ function App() {
         <Routes>
           <Route
             path="/"
-            element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} />}
+            element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} onRegister={handleRegister} />}
           />
           <Route
             path="/login"
-            element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} />}
+            element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} onRegister={handleRegister} />}
           />
           <Route
             path="/register"
-            element={<Register onRegister={() => {}} />}
+            element={<Register onRegister={handleRegister} />}
           />
           <Route
             path="/dashboard"
@@ -92,29 +145,29 @@ function App() {
               token ? (
                 <Dashboard onLogout={handleLogout} username={username} />
               ) : (
-                <Navigate to="/" />
+                <Navigate to="/login" />
               )
             }
           />
           <Route
             path="/sentence-construction"
-            element={token ? <SentenceConstruction /> : <Navigate to="/" />}
+            element={token ? <SentenceConstruction /> : <Navigate to="/login" />}
           />
           <Route
             path="/flashcards"
-            element={token ? <Flashcards /> : <Navigate to="/" />}
+            element={token ? <Flashcards /> : <Navigate to="/login" />}
           />
           <Route
             path="/word-of-the-day"
-            element={token ? <WordOfTheDay /> : <Navigate to="/" />}
+            element={token ? <WordOfTheDay /> : <Navigate to="/login" />}
           />
           <Route
             path="/dialogues"
-            element={token ? <Dialogues /> : <Navigate to="/" />}
+            element={token ? <Dialogues /> : <Navigate to="/login" />}
           />
           <Route
             path="/review"
-            element={token ? <Review /> : <Navigate to="/" />}
+            element={token ? <Review /> : <Navigate to="/login" />}
           />
         </Routes>
       </Router>

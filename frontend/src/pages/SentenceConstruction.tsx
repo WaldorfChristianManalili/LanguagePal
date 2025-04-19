@@ -27,10 +27,9 @@ function SentenceConstruction() {
   } = useSentence();
   const [categories, setCategories] = useState<string[]>([]);
   const [showEnglish, setShowEnglish] = useState(false);
-  const [isCategoryChanging, setIsCategoryChanging] = useState(false); // Track category change
+  const [isCategoryChanging, setIsCategoryChanging] = useState(false);
   const navigate = useNavigate();
 
-  // Fetch categories only once on mount
   useEffect(() => {
     const fetchCategoryList = async () => {
       try {
@@ -38,7 +37,7 @@ function SentenceConstruction() {
         setCategories(categoryList);
         if (categoryList.length > 0 && !category) {
           setCategory(categoryList[0]);
-          await fetchSentence(categoryList[0]); // Initial load
+          await fetchSentence(categoryList[0]);
         }
       } catch (err) {
         console.error('Error fetching categories:', err);
@@ -47,27 +46,30 @@ function SentenceConstruction() {
     fetchCategoryList();
   }, [setCategory, fetchSentence]);
 
-  // Handle category change with immediate state reset
   const handleCategoryChange = useCallback(
     async (newCategory: string) => {
-      setIsCategoryChanging(true); // Prevent rendering stale sentence
+      setIsCategoryChanging(true);
       setCategory(newCategory);
-      reset(); // Clear sentence and feedback
+      reset();
       setShowEnglish(false);
       try {
-        await fetchSentence(newCategory); // Fetch new sentence
+        await fetchSentence(newCategory);
       } finally {
-        setIsCategoryChanging(false); // Allow rendering after fetch
+        setIsCategoryChanging(false);
       }
     },
     [setCategory, fetchSentence, reset]
   );
 
-  const handleReset = () => {
+  const handleReset = useCallback(async () => {
     reset();
     setShowEnglish(false);
-    fetchSentence(category || categories[0] || 'greeting'); // Fetch new sentence for current category
-  };
+    try {
+      await fetchSentence(category || categories[0] || 'greeting');
+    } catch (err: any) {
+      console.error('Error fetching new sentence:', err);
+    }
+  }, [category, categories, fetchSentence, reset]);
 
   const handleEndSession = () => {
     navigate('/dashboard');
@@ -77,18 +79,16 @@ function SentenceConstruction() {
     setShowEnglish((prev) => !prev);
   };
 
-  // Show loading spinner during sentence loading or category change
   if (sentenceLoading || isCategoryChanging) {
     return <LoadingSpinner message="Loading sentence..." />;
   }
 
-  // Show error state
   if (error) {
     return (
       <div className="flex flex-col items-center p-6">
-        <p className="text-red-600 text-lg mb-4">Error: {error}</p>
+        <p className="text-red-600 text-lg mb-4">{error}</p>
         <Button onClick={() => fetchSentence(category || categories[0] || 'greeting')}>
-          Retry
+          Try Again
         </Button>
       </div>
     );
@@ -138,7 +138,7 @@ function SentenceConstruction() {
           </Card>
         )}
         {sentence && !isCategoryChanging && (
-          <ScrambledSentence sentence={sentence} onSubmit={submitSentence} />
+          <ScrambledSentence sentence={sentence} onSubmit={(constructedSentence) => submitSentence(constructedSentence)} />
         )}
         {feedback && !isCategoryChanging && (
           <Feedback
