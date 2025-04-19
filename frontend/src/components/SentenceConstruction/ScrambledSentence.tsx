@@ -12,7 +12,6 @@ interface ScrambledSentenceProps {
 function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
   const [words, setWords] = useState<string[]>(() => {
     if (!Array.isArray(sentence.scrambledWords)) {
-      console.error('Invalid scrambledWords:', sentence.scrambledWords);
       return [];
     }
     return sentence.scrambledWords.map(word => word.trim());
@@ -21,8 +20,8 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
   const [visibleHints, setVisibleHints] = useState<number>(0);
   const wordRefs = useRef<(HTMLDivElement | null)[]>([]);
   const submitRef = useRef(false);
-
-  // Validate hints (simplified, trusting TypeScript type)
+  
+  // Validate hints
   const validatedHints = Array.isArray(sentence.hints) ? sentence.hints : [];
 
   useEffect(() => {
@@ -36,31 +35,26 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
   }, [sentence.scrambledWords]);
 
   useEffect(() => {
-    console.log('Setting up drag-and-drop for words:', words);
     const cleanupFunctions: (() => void)[] = [];
-
-    words.forEach((word, index) => {
+    
+    words.forEach((_, index) => {
       const element = wordRefs.current[index];
       if (!element) {
-        console.warn(`No ref for word: ${word} at index: ${index}`);
         return;
       }
-
-      console.log(`Attaching draggable to word: ${word} at index: ${index}`);
+      
       const draggableCleanup = draggable({
         element,
         getInitialData: () => ({ index }),
-        onDragStart: () => console.log(`Started dragging: ${word} at ${index}`),
       });
-
+      
       const dropTargetCleanup = dropTargetForElements({
         element,
         getData: () => ({ index }),
-        onDragEnter: () => console.log(`Drag entered: ${word} at ${index}`),
         onDrop: ({ source, self }) => {
           const sourceIndex = source.data.index as number;
           const destinationIndex = self.data.index as number;
-          console.log(`Dropped from ${sourceIndex} to ${destinationIndex}`);
+          
           if (sourceIndex !== destinationIndex) {
             const newWords = [...words];
             const [movedWord] = newWords.splice(sourceIndex, 1);
@@ -69,18 +63,16 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
           }
         },
       });
-
+      
       cleanupFunctions.push(draggableCleanup, dropTargetCleanup);
     });
-
+    
     return () => {
-      console.log('Cleaning up drag-and-drop');
       cleanupFunctions.forEach(cleanup => cleanup());
     };
   }, [words]);
 
   const handleReset = () => {
-    console.log('Resetting words');
     if (Array.isArray(sentence.scrambledWords)) {
       setWords(sentence.scrambledWords.map(word => word.trim()));
       setVisibleHints(0);
@@ -90,13 +82,11 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
 
   const handleSubmit = () => {
     if (submitRef.current || hasSubmitted) {
-      console.warn('Submit already in progress or already submitted, ignoring');
       return;
     }
     submitRef.current = true;
     setHasSubmitted(true);
     const constructedSentence = words.join('').trim();
-    console.log(`Submitting: ${constructedSentence}, original: ${sentence.originalSentence}`);
     onSubmit(constructedSentence);
     setTimeout(() => {
       submitRef.current = false;
@@ -106,7 +96,6 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
   const handleRevealHint = () => {
     if (visibleHints < validatedHints.length) {
       setVisibleHints(prev => prev + 1);
-      console.log(`Revealing hint ${visibleHints + 1}`);
     }
   };
 
@@ -167,7 +156,7 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
             </div>
           ))
         ) : (
-          <p className="text-gray-500">No words to arrange</p>
+          <p className="text-gray-500">No words to arrange.</p>
         )}
       </div>
       <div className="flex gap-4 justify-center mt-4">

@@ -97,7 +97,7 @@ function Review() {
           {loading && <p className="text-gray-600">Loading...</p>}
           {error && <p className="text-red-600">{error}</p>}
           {!loading && pinnedResults.length === 0 && (
-            <p className="text-gray-600">No pinned results yet. Pin a sentence from Sentence Construction!</p>
+            <p className="text-gray-600">No pinned results yet.</p>
           )}
           {pinnedResults.map(result => (
             <Feedback

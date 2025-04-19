@@ -27,36 +27,30 @@ function SentenceConstruction() {
   } = useSentence();
   const [categories, setCategories] = useState<string[]>([]);
   const [showEnglish, setShowEnglish] = useState(false);
-  const [isCategoryChanging, setIsCategoryChanging] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchCategoryList = async () => {
-      try {
-        const categoryList = await getCategories();
-        setCategories(categoryList);
-        if (categoryList.length > 0 && !category) {
-          setCategory(categoryList[0]);
-          await fetchSentence(categoryList[0]);
-        }
-      } catch (err) {
-        console.error('Error fetching categories:', err);
+    const fetchInitialData = async () => {
+      const categoryList = await getCategories();
+      setCategories(categoryList);
+      if (categoryList.length > 0 && !category) {
+        setCategory(categoryList[0]);
+        await fetchSentence(categoryList[0]);
       }
+      setIsLoading(false);
     };
-    fetchCategoryList();
+    fetchInitialData();
   }, [setCategory, fetchSentence]);
 
   const handleCategoryChange = useCallback(
     async (newCategory: string) => {
-      setIsCategoryChanging(true);
+      setIsLoading(true);
       setCategory(newCategory);
       reset();
       setShowEnglish(false);
-      try {
-        await fetchSentence(newCategory);
-      } finally {
-        setIsCategoryChanging(false);
-      }
+      await fetchSentence(newCategory);
+      setIsLoading(false);
     },
     [setCategory, fetchSentence, reset]
   );
@@ -64,22 +58,16 @@ function SentenceConstruction() {
   const handleReset = useCallback(async () => {
     reset();
     setShowEnglish(false);
-    try {
-      await fetchSentence(category || categories[0] || 'greeting');
-    } catch (err: any) {
-      console.error('Error fetching new sentence:', err);
-    }
+    await fetchSentence(category || categories[0] || 'greeting');
   }, [category, categories, fetchSentence, reset]);
 
-  const handleEndSession = () => {
-    navigate('/dashboard');
-  };
-
-  const toggleEnglishSentence = () => {
+  const toggleEnglishSentence = useCallback(() => {
     setShowEnglish((prev) => !prev);
-  };
+  }, []);
 
-  if (sentenceLoading || isCategoryChanging) {
+  const isDisabled = sentenceLoading || submitLoading || pinLoading || isLoading;
+
+  if (isLoading || sentenceLoading) {
     return <LoadingSpinner message="Loading sentence..." />;
   }
 
@@ -107,40 +95,43 @@ function SentenceConstruction() {
           categories={categories}
           selectedCategory={category}
           onChange={handleCategoryChange}
-          disabled={categories.length === 0 || sentenceLoading || submitLoading || pinLoading || isCategoryChanging}
+          disabled={categories.length === 0 || isDisabled}
         />
-        {sentence && !isCategoryChanging && (
-          <Card className="mb-4 p-6 bg-white shadow-md">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-gray-800">English Sentence</h2>
-              <label className="flex items-center cursor-pointer">
-                <span className="mr-2 text-gray-600">Show English</span>
-                <input
-                  type="checkbox"
-                  checked={showEnglish}
-                  onChange={toggleEnglishSentence}
-                  className="hidden"
-                />
-                <div
-                  className={`w-12 h-6 bg-gray-300 rounded-full p-1 transition-colors duration-300 ${
-                    showEnglish ? 'bg-green-500' : ''
-                  }`}
-                >
+        {sentence && (
+          <>
+            <Card className="mb-4 p-6 bg-white shadow-md">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-800">English Sentence</h2>
+                <label className="flex items-center cursor-pointer">
+                  <span className="mr-2 text-gray-600">Show English</span>
+                  <input
+                    type="checkbox"
+                    checked={showEnglish}
+                    onChange={toggleEnglishSentence}
+                    className="hidden"
+                  />
                   <div
-                    className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${
-                      showEnglish ? 'translate-x-6' : ''
+                    className={`w-12 h-6 bg-gray-300 rounded-full p-1 transition-colors duration-300 ${
+                      showEnglish ? 'bg-green-500' : ''
                     }`}
-                  ></div>
-                </div>
-              </label>
-            </div>
-            {showEnglish && <p className="text-gray-600 mt-2">{sentence.englishSentence}</p>}
-          </Card>
+                  >
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${
+                        showEnglish ? 'translate-x-6' : ''
+                      }`}
+                    />
+                  </div>
+                </label>
+              </div>
+              {showEnglish && <p className="text-gray-600 mt-2">{sentence.englishSentence}</p>}
+            </Card>
+            <ScrambledSentence
+              sentence={sentence}
+              onSubmit={(constructedSentence) => submitSentence(constructedSentence)}
+            />
+          </>
         )}
-        {sentence && !isCategoryChanging && (
-          <ScrambledSentence sentence={sentence} onSubmit={(constructedSentence) => submitSentence(constructedSentence)} />
-        )}
-        {feedback && !isCategoryChanging && (
+        {feedback && (
           <Feedback
             isCorrect={feedback.is_correct}
             feedback={feedback.feedback}
@@ -157,16 +148,16 @@ function SentenceConstruction() {
               onClick={handleReset}
               variant="outline"
               className="mt-4 border-gray-300 text-gray-700 hover:bg-gray-100"
-              disabled={sentenceLoading || submitLoading || pinLoading || isCategoryChanging}
+              disabled={isDisabled}
             >
               Next Sentence
             </Button>
           )}
           <Button
-            onClick={handleEndSession}
+            onClick={() => navigate('/dashboard')}
             variant="outline"
             className="mt-4 border-gray-300 text-gray-700 hover:bg-gray-100"
-            disabled={sentenceLoading || submitLoading || pinLoading || isCategoryChanging}
+            disabled={isDisabled}
           >
             End Session
           </Button>
