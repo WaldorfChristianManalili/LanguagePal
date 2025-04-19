@@ -8,12 +8,14 @@ import Flashcards from './pages/Flashcards';
 import WordOfTheDay from './pages/WordOfTheDay';
 import Dialogues from './pages/Dialogues';
 import Review from './pages/Review';
+import LoadingSpinner from './components/Common/LoadingSpinner';
+import { validateToken } from './api/auth';
 
-// Auth context to manage token
 interface AuthContextType {
   token: string | null;
   setToken: (token: string | null) => void;
-  username?: string; // Optional, as username may not be available
+  username?: string;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -29,22 +31,33 @@ export function useAuth() {
 function App() {
   const [token, setToken] = useState<string | null>(null);
   const [username, setUsername] = useState<string | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
 
-  // Check for token in localStorage on mount
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    if (storedToken) {
-      setToken(storedToken);
-      // Optionally fetch username from backend using token
-      // Example: fetchUsername(storedToken).then(setUsername);
-    }
+    const checkToken = async () => {
+      const storedToken = localStorage.getItem('token');
+      if (storedToken) {
+        try {
+          const response = await validateToken(storedToken);
+          setToken(storedToken);
+          setUsername(response.username || 'User');
+          console.log('Token validated, username:', response.username);
+        } catch (error) {
+          console.error('Token validation failed:', error);
+          setToken(null);
+          setUsername(undefined);
+          localStorage.removeItem('token');
+        }
+      }
+      setLoading(false);
+    };
+    checkToken();
   }, []);
 
-  const handleLogin = (newToken: string) => {
+  const handleLogin = (newToken: string, newUsername?: string) => {
     setToken(newToken);
+    setUsername(newUsername || 'User');
     localStorage.setItem('token', newToken);
-    // Optionally set username if provided by Login component
-    // setUsername(username);
   };
 
   const handleLogout = () => {
@@ -53,8 +66,12 @@ function App() {
     localStorage.removeItem('token');
   };
 
+  if (loading) {
+    return <LoadingSpinner message="Validating session..." />;
+  }
+
   return (
-    <AuthContext.Provider value={{ token, setToken, username }}>
+    <AuthContext.Provider value={{ token, setToken, username, loading }}>
       <Router>
         <Routes>
           <Route
@@ -65,7 +82,10 @@ function App() {
             path="/login"
             element={token ? <Navigate to="/dashboard" /> : <Home onLogin={handleLogin} />}
           />
-          <Route path="/register" element={<Register onRegister={() => {}} />} />
+          <Route
+            path="/register"
+            element={<Register onRegister={() => {}} />}
+          />
           <Route
             path="/dashboard"
             element={

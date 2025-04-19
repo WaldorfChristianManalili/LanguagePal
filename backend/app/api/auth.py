@@ -103,3 +103,20 @@ async def get_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+@router.get("/validate", response_model=User)
+async def validate_token(
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    logger.debug(f"Validating token for user_id: {user_id}")
+    
+    # Fetch user from database
+    result = await db.execute(select(UserModel).filter(UserModel.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        logger.error(f"User not found for user_id: {user_id}")
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    logger.debug(f"Token validated successfully for user: {user.username}")
+    return user

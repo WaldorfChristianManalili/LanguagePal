@@ -1,13 +1,33 @@
-import { Link } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Card } from '../components/Common/Card';
 import { Button } from '../components/Common/Button';
+import LoadingSpinner from '../components/Common/LoadingSpinner';
+import { useAuth } from '../App'; // Import useAuth to access token
 
 interface DashboardProps {
   onLogout: () => void;
-  username?: string; // Optional, as username may not be available
+  username?: string;
 }
 
 function Dashboard({ onLogout, username = 'User' }: DashboardProps) {
+  const navigate = useNavigate();
+  const { token, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading && !token) {
+      console.log('No token found, logging out');
+      onLogout();
+      navigate('/', { replace: true });
+    } else if (!loading) {
+      console.log('Token found, staying on dashboard');
+    }
+  }, [navigate, onLogout, token, loading]);
+
+  if (loading) {
+    return <LoadingSpinner message="Validating session..." />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-r from-blue-100 to-blue-200 p-6">
       <div className="max-w-4xl mx-auto">

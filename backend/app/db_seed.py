@@ -4,37 +4,8 @@ from app.database import AsyncSessionLocal
 from app.models.sentence import Sentence
 from app.models.user import User
 from app.models.category import Category
-from passlib.context import CryptContext
+from app.seed_data import USERS, CATEGORIES, SENTENCES
 import logging
-
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-USERS = [
-    {
-        "username": "admin",
-        "email": "admin@example.com",
-        "hashed_password": pwd_context.hash("admin"),
-        "learning_language": "Japanese",
-        "openai_thread_id": None,
-        "is_active": True,
-    },
-]
-
-CATEGORIES = [
-    {"name": "Greetings"},
-    {"name": "Travel"},
-    {"name": "Daily Life"},
-]
-
-SENTENCES = [
-    {"text": "Hello, how are you?", "category_name": "Greetings"},
-    {"text": "Where is the airport?", "category_name": "Travel"},
-    {"text": "I need a coffee.", "category_name": "Daily Life"},
-    {"text": "Good morning!", "category_name": "Greetings"},
-    {"text": "Can you help me?", "category_name": "Travel"},
-    {"text": "What time is it?", "category_name": "Daily Life"},
-]
 
 async def seed_categories(db: AsyncSession):
     """Seed the categories table with sample data."""

@@ -2,18 +2,26 @@ export interface SentenceData {
   scrambledWords: string[];
   originalSentence: string;
   sentenceId: number;
+  englishSentence: string;
+  hints: { text: string; usefulness: number }[];
 }
 
-export interface SubmitSentenceRequest {
-  sentenceId: number;
-  constructedSentence: string;
-  originalSentence: string;
+export interface SubmitSentenceResponse {
+  is_correct: boolean;
+  feedback: string;
+  translated_sentence: string;
+  result_id: number;
+  is_pinned: boolean;
+  explanation: string;
+  sentence_id: number;
+  user_answer: string;
 }
 
 export interface FeedbackData {
-  isCorrect: boolean;
+  is_correct: boolean;
   feedback: string;
-  correctSentence: string;
-  resultId: number;
-  isPinned: boolean;
+  correct_sentence: string;
+  result_id: number;
+  is_pinned: boolean;
+  explanation: string;
 }

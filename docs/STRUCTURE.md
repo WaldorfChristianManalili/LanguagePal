@@ -28,15 +28,6 @@ languagepal/
 │   │   │   ├── daily_word.py        # Schema for daily words
 │   │   │   ├── situation.py         # Schema for situations
 │   │   │   └── dialogue.py          # Schema for dialogues
-│   │   ├── crud/
-│   │   │   ├── __init__.py          # Makes crud a package
-│   │   │   ├── user.py              # CRUD operations for users
-│   │   │   ├── sentence.py          # CRUD for sentences
-│   │   │   ├── category.py          # CRUD for categories
-│   │   │   ├── flashcard.py         # CRUD for flashcards
-│   │   │   ├── daily_word.py        # CRUD for daily words
-│   │   │   ├── situation.py         # CRUD for situations
-│   │   │   └── dialogue.py          # CRUD for dialogues
 │   │   ├── utils/
 │   │   │   ├── __init__.py          # Makes utils a package
 │   │   │   ├── openai.py            # OpenAI API integration (translations, dialogues)
@@ -55,7 +46,7 @@ languagepal/
 │   │   │   │   ├── Login.tsx        # Login form component
 │   │   │   │   └── Register.tsx     # Registration form component
 │   │   │   ├── SentenceConstruction/
-│   │   │   │   ├── DifficultySelect.tsx # Dropdown for difficulty
+│   │   │   │   ├── CategorySelect.tsx # Categories buttons
 │   │   │   │   ├── ScrambledSentence.tsx # Draggable scrambled sentence
 │   │   │   │   └── Feedback.tsx     # Display AI feedback
 │   │   │   ├── Flashcards/
@@ -74,7 +65,8 @@ languagepal/
 │   │   │   └── Common/
 │   │   │       ├── Button.tsx       # Reusable button component
 │   │   │       ├── Card.tsx         # Reusable card component
-│   │   │       └── PinnedToggle.tsx # Reusable toggle for pinning results
+│   │   │       ├── PinnedToggle.tsx # Reusable toggle for pinning results
+│   │   │       └── Navbar.tsx       # Reusable navigation bar
 │   │   ├── pages/
 │   │   │   ├── Home.tsx             # Home page with login and register
 │   │   │   ├── Dashboard.tsx        # Dashboard with feature selection after login

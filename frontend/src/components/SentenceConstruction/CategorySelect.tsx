@@ -1,42 +1,28 @@
-import React from 'react';
-
 interface CategorySelectProps {
   categories: string[];
-  selectedCategory: string;
+  selectedCategory: string | null;
   onChange: (category: string) => void;
-  disabled?: boolean;
+  disabled: boolean;
 }
 
-const CategorySelect: React.FC<CategorySelectProps> = ({
-  categories,
-  selectedCategory,
-  onChange,
-  disabled = false,
-}) => {
+function CategorySelect({ categories, selectedCategory, onChange, disabled }: CategorySelectProps) {
   return (
-    <div className="category-select mb-6">
-      <label htmlFor="category-select" className="text-gray-700 mr-2">
-        Select Category:
-      </label>
-      <select
-        id="category-select"
-        value={selectedCategory}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className="border rounded p-2"
-      >
-        {categories.length === 0 ? (
-          <option value="">No categories available</option>
-        ) : (
-          categories.map((category) => (
-            <option key={category} value={category}>
-              {category}
-            </option>
-          ))
-        )}
-      </select>
-    </div>
+    <select
+      value={selectedCategory ?? ''}
+      onChange={e => onChange(e.target.value)}
+      disabled={disabled}
+      className="mb-4 p-2 border rounded w-full max-w-xs"
+    >
+      <option value="" disabled>
+        Select a category
+      </option>
+      {categories.map(category => (
+        <option key={category} value={category}>
+          {category}
+        </option>
+      ))}
+    </select>
   );
-};
+}
 
 export default CategorySelect;
