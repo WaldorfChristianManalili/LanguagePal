@@ -22,13 +22,8 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
   const wordRefs = useRef<(HTMLDivElement | null)[]>([]);
   const submitRef = useRef(false);
 
-  // Validate hints to ensure they match expected format
-  const validatedHints = Array.isArray(sentence.hints)
-    ? sentence.hints.filter(
-        (hint): hint is { text: string; usefulness: number } =>
-          typeof hint === 'object' && 'text' in hint && 'usefulness' in hint
-      )
-    : [];
+  // Validate hints (simplified, trusting TypeScript type)
+  const validatedHints = Array.isArray(sentence.hints) ? sentence.hints : [];
 
   useEffect(() => {
     if (Array.isArray(sentence.scrambledWords)) {
@@ -89,6 +84,7 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
     if (Array.isArray(sentence.scrambledWords)) {
       setWords(sentence.scrambledWords.map(word => word.trim()));
       setVisibleHints(0);
+      setHasSubmitted(false);
     }
   };
 
@@ -127,11 +123,19 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
       <h2 className="text-xl font-semibold text-gray-800 mb-4">Rearrange the Words</h2>
       {validatedHints.length > 0 && (
         <div className="mb-4">
-          <h3 className="text-lg font-medium text-gray-700">Hints from Language Pal</h3>
+          <h3 className="text-lg font-medium text-gray-700">Hints</h3>
           <ul className="list-disc pl-5 text-gray-600">
-            {validatedHints.slice(0, visibleHints).map((hint, index) => (
-              <li key={index}>{hint.text}</li>
-            ))}
+            {hasSubmitted
+              ? validatedHints.map((hint, index) => (
+                  <li key={index} className="mb-1">
+                    {hint.text}
+                  </li>
+                ))
+              : validatedHints.slice(0, visibleHints).map((hint, index) => (
+                  <li key={index} className="mb-1">
+                    {hint.text}
+                  </li>
+                ))}
           </ul>
           {visibleHints < validatedHints.length && !hasSubmitted && (
             <Button
@@ -179,7 +183,6 @@ function ScrambledSentence({ sentence, onSubmit }: ScrambledSentenceProps) {
           onClick={handleReset}
           variant="outline"
           className="border-gray-300 text-gray-700 hover:bg-gray-100"
-          disabled={hasSubmitted}
         >
           Reset
         </Button>

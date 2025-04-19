@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Card } from '../components/Common/Card';
-import { Button } from '../components/Common/Button';
 import Login from '../components/Auth/Login';
 import Register from '../components/Auth/Register';
 
@@ -58,11 +56,6 @@ function Home({ onLogin, onRegister }: HomeProps) {
             </>
           )}
         </Card>
-        <div className="mt-6">
-          <Link to="/dashboard">
-            <Button variant="outline">Explore as Guest</Button>
-          </Link>
-        </div>
       </div>
     </div>
   );

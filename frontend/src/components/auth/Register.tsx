@@ -72,10 +72,16 @@ const Register: React.FC<RegisterProps> = ({ onRegister }) => {
             onChange={(e) => setLearningLanguage(e.target.value)}
             className="w-full p-2 border rounded"
           >
+            <option value="English">English</option>
             <option value="Spanish">Spanish</option>
             <option value="French">French</option>
             <option value="German">German</option>
             <option value="Japanese">Japanese</option>
+            <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+            <option value="Portuguese">Portuguese</option>
+            <option value="Italian">Italian</option>
+            <option value="Korean">Korean</option>
+            <option value="Filipino (Tagalog)">Filipino (Tagalog)</option>
           </select>
         </div>
         {error && <p className="text-red-500 mb-4">{error}</p>}

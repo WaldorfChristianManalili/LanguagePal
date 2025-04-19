@@ -140,6 +140,13 @@ async def submit_sentence(
 ):
     logger.debug(f"Submitting sentence: user_answer='{request.user_answer}', original='{request.original_sentence}', sentence_id={request.sentence_id}")
     
+    def normalize_text(text: str) -> str:
+        """Normalize text by converting to lowercase and removing whitespace and punctuation."""
+        text = text.replace('\u3000', ' ').replace('\t', ' ').replace('\n', ' ')
+        text = text.strip().replace(',', '').replace('.', '').replace('!', '').replace('?', '')
+        text = ''.join(text.split())  # Remove all spaces
+        return text.lower()
+
     # Fetch user
     result = await db.execute(select(User).filter(User.id == user_id))
     user = result.scalars().first()
@@ -169,18 +176,8 @@ async def submit_sentence(
         raise HTTPException(status_code=404, detail="Translation not found for this language")
 
     # Normalize user answer and translated text
-    is_japanese = user_language == 'Japanese'
-    def normalize_text(text: str, is_japanese: bool = False) -> str:
-        text = text.replace('\u3000', ' ').replace('\t', ' ').replace('\n', ' ')
-        text = text.strip().replace(',', '').replace('.', '').replace('!', '').replace('?','')
-        if is_japanese:
-            text = ''.join(text.split())
-        else:
-            text = ' '.join(text.split())
-        return text.lower()
-
-    user_answer_normalized = normalize_text(request.user_answer, is_japanese)
-    translated_text_normalized = normalize_text(translation.translated_text, is_japanese)
+    user_answer_normalized = normalize_text(request.user_answer)
+    translated_text_normalized = normalize_text(translation.translated_text)
     
     logger.debug(f"User answer raw: '{request.user_answer}', bytes: {[ord(c) for c in request.user_answer]}")
     logger.debug(f"Translated text raw: '{translation.translated_text}', bytes: {[ord(c) for c in translation.translated_text]}")
