@@ -5,7 +5,6 @@ import Dashboard from './pages/Dashboard';
 import Register from './components/Auth/Register';
 import SentenceConstruction from './pages/SentenceConstruction';
 import Flashcards from './pages/Flashcards';
-import WordOfTheDay from './pages/WordOfTheDay';
 import Dialogues from './pages/Dialogues';
 import Review from './pages/Review';
 import LoadingSpinner from './components/Common/LoadingSpinner';
@@ -14,7 +13,7 @@ import { validateToken, login, signup } from './api/auth';
 interface AuthContextType {
   token: string | null;
   setToken: (token: string | null) => void;
-  username?: string;
+  user: { username: string; learning_language: string } | null;
   loading: boolean;
 }
 
@@ -30,7 +29,7 @@ export function useAuth() {
 
 function App() {
   const [token, setToken] = useState<string | null>(null);
-  const [username, setUsername] = useState<string | undefined>(undefined);
+  const [user, setUser] = useState<{ username: string; learning_language: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,13 +37,13 @@ function App() {
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
         try {
-          const user = await validateToken(storedToken);
+          const userData = await validateToken(storedToken);
           setToken(storedToken);
-          setUsername(user.username);
+          setUser({ username: userData.username, learning_language: userData.learning_language });
         } catch (error) {
           console.error('Token validation failed:', error);
           setToken(null);
-          setUsername(undefined);
+          setUser(null);
           localStorage.removeItem('token');
         }
       }
@@ -52,7 +51,6 @@ function App() {
     };
     checkToken();
 
-    // Periodic token validation
     const interval = setInterval(async () => {
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
@@ -61,26 +59,27 @@ function App() {
         } catch (error) {
           console.error('Periodic token validation failed:', error);
           setToken(null);
-          setUsername(undefined);
+          setUser(null);
           localStorage.removeItem('token');
         }
       }
-    }, 30000); // Check every 30 seconds
+    }, 30000);
 
     return () => clearInterval(interval);
   }, []);
 
-  const handleLogin = async (token: string) => {
+  const handleLogin = async (username: string, password: string) => {
     try {
       setLoading(true);
-      localStorage.setItem('token', token);
-      const user = await validateToken(token);
-      setToken(token);
-      setUsername(user.username);
+      const { access_token } = await login(username, password);
+      localStorage.setItem('token', access_token);
+      const userData = await validateToken(access_token);
+      setToken(access_token);
+      setUser({ username: userData.username, learning_language: userData.learning_language });
     } catch (error) {
       console.error('Login failed:', error);
       setToken(null);
-      setUsername(undefined);
+      setUser(null);
       localStorage.removeItem('token');
       throw error;
     } finally {
@@ -99,13 +98,13 @@ function App() {
       await signup(email, username, password, learning_language);
       const { access_token } = await login(username, password);
       localStorage.setItem('token', access_token);
-      const user = await validateToken(access_token);
+      const userData = await validateToken(access_token);
       setToken(access_token);
-      setUsername(user.username);
+      setUser({ username: userData.username, learning_language: userData.learning_language });
     } catch (error) {
       console.error('Registration failed:', error);
       setToken(null);
-      setUsername(undefined);
+      setUser(null);
       localStorage.removeItem('token');
       throw error;
     } finally {
@@ -115,7 +114,7 @@ function App() {
 
   const handleLogout = () => {
     setToken(null);
-    setUsername(undefined);
+    setUser(null);
     localStorage.removeItem('token');
   };
 
@@ -124,7 +123,7 @@ function App() {
   }
 
   return (
-    <AuthContext.Provider value={{ token, setToken, username, loading }}>
+    <AuthContext.Provider value={{ token, setToken, user, loading }}>
       <Router>
         <Routes>
           <Route
@@ -143,7 +142,7 @@ function App() {
             path="/dashboard"
             element={
               token ? (
-                <Dashboard onLogout={handleLogout} username={username} />
+                <Dashboard onLogout={handleLogout} username={user?.username} />
               ) : (
                 <Navigate to="/login" />
               )
@@ -156,10 +155,6 @@ function App() {
           <Route
             path="/flashcards"
             element={token ? <Flashcards /> : <Navigate to="/login" />}
-          />
-          <Route
-            path="/word-of-the-day"
-            element={token ? <WordOfTheDay /> : <Navigate to="/login" />}
           />
           <Route
             path="/dialogues"

@@ -7,7 +7,7 @@ class UserBase(BaseModel):
     learning_language: str
 
 class UserCreate(UserBase):
-    password: str  # Plain password for creation, will be hashed in the backend
+    password: str
 
 class UserUpdate(BaseModel):
     username: str | None = None
@@ -15,9 +15,19 @@ class UserUpdate(BaseModel):
     learning_language: str | None = None
     is_active: bool | None = None
 
-class User(UserBase):
+class UserResponse(UserBase):
     id: int
-    hashed_password: str  # Included in response for internal use, not exposed publicly
+    openai_thread_id: str | None = None
+    is_active: bool = True
+    created_at: datetime
+    last_login: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+class User(UserBase):  # Internal use
+    id: int
+    hashed_password: str
     openai_thread_id: str | None = None
     is_active: bool = True
     created_at: datetime

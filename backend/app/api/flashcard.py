@@ -1,69 +1,134 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.flashcard import Word as WordModel, FlashcardSession as FlashcardSessionModel, FlashcardResult as FlashcardResultModel
-from app.models.user import User as UserModel
-from app.schemas.flashcard import Word, FlashcardSession, FlashcardSessionCreate, FlashcardResult, FlashcardResultCreate
+from sqlalchemy import select
+from datetime import datetime
+from app.models.flashcard import Flashcard
+from app.models.user import User
+from app.models.category import Category
+from app.models.lesson import Lesson
+from app.models.progress import Progress
+from app.schemas.flashcard import FlashcardResponse, SubmitFlashcardRequest, SubmitFlashcardResponse
 from app.database import get_db
-from app.utils.openai import client as openai_client, translate_sentence
-from app.utils.pexels import get_image
-from typing import List
+from app.utils.openai import generate_flashcard
+from app.utils.jwt import get_current_user
 
-router = APIRouter()
+router = APIRouter(tags=["flashcard"])
 
-@router.post("/flashcard/session", response_model=FlashcardSession)
-async def start_flashcard_session(session: FlashcardSessionCreate, db: AsyncSession = Depends(get_db)):
-    user = (await db.execute(select(UserModel).filter(UserModel.id == session.user_id))).scalars().first()
+async def get_user(db: AsyncSession, user_id: int) -> User:
+    """Fetch user by ID, raising 404 if not found."""
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    db_session = FlashcardSessionModel(**session.dict())
-    db.add(db_session)
-    await db.commit()
-    await db.refresh(db_session)
-    
-    # Generate 10 words
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": f"Generate 10 {user.learning_language} words related to {session.category_id} with definitions."}]
+    return user
+
+@router.get("/generate", response_model=FlashcardResponse)
+async def get_flashcard(
+    lesson_id: int,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate or retrieve a cached flashcard for the given lesson."""
+    user = await get_user(db, user_id)
+    user_language = user.learning_language
+
+    # Fetch lesson and category
+    result = await db.execute(select(Lesson).filter(Lesson.id == lesson_id))
+    lesson = result.scalars().first()
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    result = await db.execute(select(Category).filter(Category.id == lesson.category_id))
+    category = result.scalars().first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    # Fetch cached flashcards
+    result = await db.execute(
+        select(Flashcard).filter(Flashcard.category_id == lesson.category_id)
     )
-    words_data = response.choices[0].message.content.split("\n")[:10]
-    
-    for word_data in words_data:
-        word, definition = word_data.split(" - ", 1)
-        image_url = await get_image(word)
-        db_word = WordModel(
-            original_word=word,
-            translated_word=await translate_sentence(word, "English"),  # Now properly defined
-            definition=definition,
-            image_url=image_url,
-            category_id=session.category_id,
-            created_by_ai=True
-        )
-        db.add(db_word)
-    await db.commit()
-    return db_session
+    flashcards = result.scalars().all()
 
-@router.post("/flashcard/result", response_model=FlashcardResult)
-async def submit_flashcard_result(result: FlashcardResultCreate, db: AsyncSession = Depends(get_db)):
-    db_result = FlashcardResultModel(**result.dict())
-    db.add(db_result)
-    
-    # Limit to 200 results, remove oldest unpinned
-    results = (await db.execute(select(FlashcardResultModel).filter(FlashcardResultModel.session_id == result.session_id).order_by(FlashcardResultModel.created_at))).scalars().all()
-    if len(results) > 200:
-        for old_result in results[:-200]:
-            if not old_result.is_pinned:
-                await db.delete(old_result)
-    
-    await db.commit()
-    await db.refresh(db_result)
-    return db_result
+    # Generate new flashcard if none exist
+    if not flashcards:
+        flashcard_data = await generate_flashcard(category.name, user_language, db)
+        return {
+            "flashcard_id": flashcard_data.get("flashcard_id", 0),
+            "word": flashcard_data["word"],
+            "translation": flashcard_data["translation"],
+            "category": category.name,
+            "lesson_id": lesson_id
+        }
 
-@router.get("/flashcard/session/{session_id}", response_model=List[Word])
-async def get_flashcard_words(session_id: int, db: AsyncSession = Depends(get_db)):
-    session = (await db.execute(select(FlashcardSessionModel).filter(FlashcardSessionModel.id == session_id))).scalars().first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    words = (await db.execute(select(WordModel).filter(WordModel.category_id == session.category_id))).scalars().all()[:10]
-    return words
+    # Select least-used flashcard
+    flashcard = min(flashcards, key=lambda f: (f.used_count, f.last_used_at or datetime.min))
+    flashcard.used_count += 1
+    flashcard.last_used_at = datetime.utcnow()
+    db.add(flashcard)
+
+    # Reset used_count if all flashcards are heavily used
+    if all(f.used_count > 10 for f in flashcards):
+        for f in flashcards:
+            f.used_count = 0
+        db.add_all(flashcards)
+
+    await db.commit()
+
+    return {
+        "flashcard_id": flashcard.id,
+        "word": flashcard.word,
+        "translation": flashcard.translation,
+        "category": category.name,
+        "lesson_id": lesson_id
+    }
+
+@router.post("/submit", response_model=SubmitFlashcardResponse)
+async def submit_flashcard(
+    request: SubmitFlashcardRequest,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Submit a flashcard answer and store the result in progress."""
+    user = await get_user(db, user_id)
+
+    # Fetch flashcard
+    result = await db.execute(select(Flashcard).filter(Flashcard.id == request.flashcard_id))
+    flashcard = result.scalars().first()
+    if not flashcard:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+
+    # Evaluate answer
+    is_correct = request.user_answer.strip().lower() == flashcard.translation.strip().lower()
+    feedback = (
+        "Correct! Well done." if is_correct
+        else f"Incorrect. The correct translation is: {flashcard.translation}"
+    )
+
+    # Store result in progress
+    result_data = {
+        "is_correct": is_correct,
+        "feedback": feedback,
+        "word": flashcard.word,
+        "translation": flashcard.translation,
+        "user_answer": request.user_answer,
+        "flashcard_id": flashcard.id
+    }
+    progress = Progress(
+        user_id=user_id,
+        category_id=flashcard.category_id,
+        activity_id=f"flashcard-{request.flashcard_id}",
+        type="flashcard",
+        completed=True,
+        result=str(result_data)
+    )
+    db.add(progress)
+    await db.commit()
+
+    return {
+        "is_correct": is_correct,
+        "feedback": feedback,
+        "translation": flashcard.translation,
+        "result_id": progress.id,
+        "flashcard_id": flashcard.id,
+        "user_answer": request.user_answer
+    }

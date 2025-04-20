@@ -1,37 +1,31 @@
 from pydantic import BaseModel
-from datetime import datetime
+from typing import List, Dict
 
-class DialogueBase(BaseModel):
-    user_id: int
-    situation_id: int
-    openai_thread_id: str
-    started_at: datetime
-    completed_at: datetime | None = None
-    evaluation_score: float | None = None
-    evaluation_feedback: str | None = None
-    message_count: int = 0
-
-class DialogueCreate(DialogueBase):
-    pass
-
-class Dialogue(DialogueBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-class DialogueMessageBase(BaseModel):
+class DialogueResponse(BaseModel):
     dialogue_id: int
-    is_user: bool = True
-    content: str
-    translation: str | None = None
-    created_at: datetime
+    situation: str
+    conversation: List[Dict[str, str]]
+    category: str
+    lesson_id: int
 
-class DialogueMessageCreate(DialogueMessageBase):
-    pass
+class ChatRequest(BaseModel):
+    dialogue_id: int
+    conversation: List[Dict[str, str]]
 
-class DialogueMessage(DialogueMessageBase):
-    id: int
+class ChatResponse(BaseModel):
+    dialogue_id: int
+    conversation: List[Dict[str, str]]
+    is_complete: bool
 
-    class Config:
-        from_attributes = True
+class TranslateResponse(BaseModel):
+    translation: str
+
+class SubmitDialogueRequest(BaseModel):
+    dialogue_id: int
+    conversation: List[Dict[str, str]]
+
+class SubmitDialogueResponse(BaseModel):
+    is_correct: bool
+    feedback: str
+    result_id: int
+    dialogue_id: int

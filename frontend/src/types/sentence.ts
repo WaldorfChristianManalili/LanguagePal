@@ -1,9 +1,14 @@
-export interface SentenceData {
-  scrambledWords: string[];
-  originalSentence: string;
-  sentenceId: number;
-  englishSentence: string;
+export interface SentenceResponse {
+  scrambled_words: string[];
+  original_sentence: string;
+  sentence_id: number;
+  english_sentence: string;
   hints: { text: string; usefulness: number }[];
+}
+
+export interface SubmitSentenceRequest {
+  sentence_id: number;
+  user_answer: string;
 }
 
 export interface SubmitSentenceResponse {
@@ -11,17 +16,7 @@ export interface SubmitSentenceResponse {
   feedback: string;
   translated_sentence: string;
   result_id: number;
-  is_pinned: boolean;
   explanation: string;
   sentence_id: number;
   user_answer: string;
-}
-
-export interface FeedbackData {
-  is_correct: boolean;
-  feedback: string;
-  correct_sentence: string;
-  result_id: number;
-  is_pinned: boolean;
-  explanation: string;
 }

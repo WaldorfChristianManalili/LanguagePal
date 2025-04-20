@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from app.database import engine, Base, get_db
 from app.db_seed import seed_database
-from app.api import auth, sentence, flashcard, daily_word, dialogue, category
+from app.api import auth, sentence, flashcard, dialogue, category, dashboard  # Add dashboard
 import logging
 
 @asynccontextmanager
@@ -36,14 +36,13 @@ app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(category.router, prefix="/category", tags=["Category"])
 app.include_router(sentence.router, prefix="/sentence", tags=["Sentence Construction"])
 app.include_router(flashcard.router, prefix="/flashcard", tags=["Flashcard Vocabulary"])
-app.include_router(daily_word.router, prefix="/daily_word", tags=["Word of the Day"])
 app.include_router(dialogue.router, prefix="/dialogue", tags=["Simulated Dialogues"])
+app.include_router(dashboard.router, prefix="", tags=["Dashboard"])
 
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to LanguagePal API!"}
 
-# Remove in production
 @app.get("/test-db")
 async def test_database(db: AsyncSession = Depends(get_db)):
     return {"message": "Async database connection successful!"}

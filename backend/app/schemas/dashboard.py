@@ -3,12 +3,15 @@ from typing import List
 
 class LessonSchema(BaseModel):
     id: int
-    name: str
-    description: str | None
+    title: str
+    subtitle: str | None
+    image: str
+    completed: bool
+    categoryId: int
 
-class CategoryResponse(BaseModel):
+class DashboardResponse(BaseModel):
     id: int
     name: str
-    chapter: int
     difficulty: str
+    progress: float
     lessons: List[LessonSchema]

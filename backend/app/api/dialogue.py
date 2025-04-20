@@ -1,91 +1,192 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update, func  # Add func import
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.dialogue import Dialogue as DialogueModel, DialogueMessage as DialogueMessageModel
-from app.models.situation import Situation as SituationModel
-from app.models.user import User as UserModel
-from app.schemas.dialogue import Dialogue, DialogueMessage, DialogueMessageCreate
+from sqlalchemy import select
+from app.models.dialogue import Dialogue
+from app.models.user import User
+from app.models.category import Category
+from app.models.lesson import Lesson
+from app.models.progress import Progress
+from app.schemas.dialogue import DialogueResponse, ChatRequest, ChatResponse, TranslateResponse, SubmitDialogueRequest, SubmitDialogueResponse
 from app.database import get_db
-from app.utils.openai import client as openai_client, translate_sentence  # Add translate_sentence import
-from random import choice
+from app.utils.openai import generate_situation, chat_message, translate_message, evaluate_conversation
+from app.utils.jwt import get_current_user
+import json
 
-router = APIRouter()
+router = APIRouter(tags=["dialogue"])
 
-@router.post("/dialogue/start", response_model=Dialogue)
-async def start_dialogue(user_id: int, db: AsyncSession = Depends(get_db)):
-    user = (await db.execute(select(UserModel).filter(UserModel.id == user_id))).scalars().first()
+async def get_user(db: AsyncSession, user_id: int) -> User:
+    """Fetch user by ID, raising 404 if not found."""
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Get unused situations
-    result = await db.execute(select(SituationModel).filter(SituationModel.used_count == 0))
-    situations = result.scalars().all()
-    
-    if not situations:
-        await db.execute(update(SituationModel).values(used_count=0))
-        await db.commit()
-        result = await db.execute(select(SituationModel))
-        situations = result.scalars().all()
-    
-    situation = choice(situations)
-    thread = await openai_client.threads.create()
-    db_dialogue = DialogueModel(
-        user_id=user_id,
-        situation_id=situation.id,
-        openai_thread_id=thread.id
-    )
-    db.add(db_dialogue)
-    
-    situation.used_count += 1
-    situation.last_used_at = func.now()  # Now defined
-    await db.commit()
-    await db.refresh(db_dialogue)
-    return db_dialogue
+    return user
 
-@router.post("/dialogue/message", response_model=DialogueMessage)
-async def send_message(message: DialogueMessageCreate, db: AsyncSession = Depends(get_db)):
-    dialogue = (await db.execute(select(DialogueModel).filter(DialogueModel.id == message.dialogue_id))).scalars().first()
+@router.get("/generate", response_model=DialogueResponse)
+async def generate_dialogue_situation(
+    lesson_id: int,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate or retrieve a cached situation for the dialogue."""
+    user = await get_user(db, user_id)
+    user_language = user.learning_language
+
+    # Fetch lesson and category
+    result = await db.execute(select(Lesson).filter(Lesson.id == lesson_id))
+    lesson = result.scalars().first()
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    result = await db.execute(select(Category).filter(Category.id == lesson.category_id))
+    category = result.scalars().first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    # Check for cached situation
+    result = await db.execute(
+        select(Dialogue).filter(
+            Dialogue.category_id == lesson.category_id,
+            Dialogue.lesson_id == lesson.id
+        )
+    )
+    dialogue = result.scalars().first()
+
+    # Generate new situation if none exists
+    if not dialogue:
+        situation = await generate_situation(category.name, lesson.name, user_language)
+        dialogue = Dialogue(
+            situation=situation["situation"],
+            category_id=category.id,
+            lesson_id=lesson.id
+        )
+        db.add(dialogue)
+        await db.commit()
+        await db.refresh(dialogue)
+
+    # Start conversation
+    initial_message = await chat_message(
+        dialogue.situation,
+        [],
+        user_language,
+        user_id
+    )
+
+    conversation = [initial_message]
+    return {
+        "dialogue_id": dialogue.id,
+        "situation": dialogue.situation,
+        "conversation": conversation,
+        "category": category.name,
+        "lesson_id": lesson_id
+    }
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    request: ChatRequest,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Handle user message and return AI response."""
+    user = await get_user(db, user_id)
+    user_language = user.learning_language
+
+    # Fetch dialogue
+    result = await db.execute(select(Dialogue).filter(Dialogue.id == request.dialogue_id))
+    dialogue = result.scalars().first()
     if not dialogue:
         raise HTTPException(status_code=404, detail="Dialogue not found")
-    
-    situation = (await db.execute(select(SituationModel).filter(SituationModel.id == dialogue.situation_id))).scalars().first()
-    user = (await db.execute(select(UserModel).filter(UserModel.id == dialogue.user_id))).scalars().first()
-    
-    db_message = DialogueMessageModel(**message.dict())
-    db.add(db_message)
-    dialogue.message_count += 1
-    
-    if dialogue.message_count >= (situation.max_messages if not situation.is_free_chat else float('inf')):
-        evaluation = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": f"Evaluate this {user.learning_language} conversation: {message.content}"}]
-        )
-        dialogue.evaluation_score = float(evaluation.choices[0].message.content.split()[0])
-        dialogue.evaluation_feedback = evaluation.choices[0].message.content
-        dialogue.completed_at = func.now()  # Now defined
-    else:
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": f"Respond in {user.learning_language} to: {message.content}"}]
-        )
-        ai_message = DialogueMessageModel(
-            dialogue_id=message.dialogue_id,
-            is_user=False,
-            content=response.choices[0].message.content
-        )
-        db.add(ai_message)
-        dialogue.message_count += 1
-    
-    await db.commit()
-    await db.refresh(db_message)
-    return db_message
 
-@router.get("/dialogue/translate/{message_id}", response_model=str)
-async def translate_message(message_id: int, db: AsyncSession = Depends(get_db)):
-    message = (await db.execute(select(DialogueMessageModel).filter(DialogueMessageModel.id == message_id))).scalars().first()
-    if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
-    translation = await translate_sentence(message.content, "English")  # Now defined
-    message.translation = translation
+    # Parse conversation
+    conversation = request.conversation
+    if len([msg for msg in conversation if msg["speaker"] == "user"]) >= 3:
+        raise HTTPException(status_code=400, detail="Maximum user messages reached")
+
+    # Generate AI response
+    ai_message = await chat_message(
+        dialogue.situation,
+        conversation,
+        user_language,
+        user_id
+    )
+    conversation.append(ai_message)
+
+    # Check if conversation should end (6 messages total)
+    is_complete = len(conversation) >= 6
+    if is_complete:
+        evaluation = await evaluate_conversation(conversation, user_language)
+        result_data = {
+            "is_correct": evaluation["satisfactory"],
+            "feedback": evaluation["feedback"],
+            "situation": dialogue.situation,
+            "conversation": conversation
+        }
+        progress = Progress(
+            user_id=user_id,
+            category_id=dialogue.category_id,
+            activity_id=f"dialogue-{dialogue.id}",
+            type="dialogue",
+            completed=True,
+            result=json.dumps(result_data)
+        )
+        db.add(progress)
+        await db.commit()
+
+    return {
+        "dialogue_id": dialogue.id,
+        "conversation": conversation,
+        "is_complete": is_complete
+    }
+
+@router.post("/translate", response_model=TranslateResponse)
+async def translate(
+    message: str,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Translate a message to English."""
+    user = await get_user(db, user_id)
+    translation = await translate_message(message, user.learning_language, "English")
+    return {"translation": translation}
+
+@router.post("/submit", response_model=SubmitDialogueResponse)
+async def submit_dialogue(
+    request: SubmitDialogueRequest,
+    user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Submit final conversation for evaluation (if ended early)."""
+    user = await get_user(db, user_id)
+    user_language = user.learning_language
+
+    # Fetch dialogue
+    result = await db.execute(select(Dialogue).filter(Dialogue.id == request.dialogue_id))
+    dialogue = result.scalars().first()
+    if not dialogue:
+        raise HTTPException(status_code=404, detail="Dialogue not found")
+
+    # Evaluate conversation
+    evaluation = await evaluate_conversation(request.conversation, user_language)
+    result_data = {
+        "is_correct": evaluation["satisfactory"],
+        "feedback": evaluation["feedback"],
+        "situation": dialogue.situation,
+        "conversation": request.conversation
+    }
+    progress = Progress(
+        user_id=user_id,
+        category_id=dialogue.category_id,
+        activity_id=f"dialogue-{dialogue.id}",
+        type="dialogue",
+        completed=True,
+        result=json.dumps(result_data)
+    )
+    db.add(progress)
     await db.commit()
-    return translation
+
+    return {
+        "is_correct": evaluation["satisfactory"],
+        "feedback": evaluation["feedback"],
+        "result_id": progress.id,
+        "dialogue_id": dialogue.id
+    }
