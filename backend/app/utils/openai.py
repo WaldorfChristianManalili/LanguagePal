@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -127,13 +127,49 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
             "explanation": "Translation error"
         }
 
-async def generate_flashcard(category: str, target_language: str, db: AsyncSession = None) -> dict:
+async def generate_flashcard(category: str, target_language: str, db: AsyncSession = None, word: str = None) -> dict:
     if not client:
+        if db:
+            # Try cached flashcard
+            result = await db.execute(
+                select(Flashcard).filter(Flashcard.category_id == 1).order_by(Flashcard.used_count.asc()).limit(1)
+            )
+            cached = result.scalars().first()
+            if cached:
+                return {
+                    "flashcard_id": cached.id,
+                    "word": cached.word,
+                    "translation": cached.translation,
+                    "type": cached.type or "noun",
+                    "english_equivalents": cached.english_equivalents or [cached.translation],
+                    "definition": cached.definition or "A word",
+                    "english_definition": cached.english_definition or "A word",
+                    "example_sentence": cached.example_sentence or f"{cached.word} example.",
+                    "english_sentence": cached.english_sentence or f"{cached.translation} example.",
+                    "options": [
+                        {"id": "1", "option_text": cached.translation},
+                        {"id": "2", "option_text": "incorrect1"},
+                        {"id": "3", "option_text": "incorrect2"},
+                        {"id": "4", "option_text": "incorrect3"}
+                    ]
+                }
+        # Generic fallback
         return {
-            "word": "hello",
-            "definition": "A greeting",
-            "example_sentence": "Hello, how are you?",
-            "image": "https://via.placeholder.com/60"
+            "flashcard_id": 0,
+            "word": "word",
+            "translation": "word",
+            "type": "noun",
+            "english_equivalents": ["word"],
+            "definition": "A vocabulary item",
+            "english_definition": "A vocabulary item",
+            "example_sentence": f"A simple {target_language} word.",
+            "english_sentence": "A simple word.",
+            "options": [
+                {"id": "1", "option_text": "word"},
+                {"id": "2", "option_text": "incorrect1"},
+                {"id": "3", "option_text": "incorrect2"},
+                {"id": "4", "option_text": "incorrect3"}
+            ]
         }
     
     try:
@@ -144,25 +180,41 @@ async def generate_flashcard(category: str, target_language: str, db: AsyncSessi
                     "role": "system",
                     "content": (
                         f"You are Language Pal, a friendly language tutor. Generate a flashcard for a vocabulary word in the category '{category}' for {target_language}. "
+                        f"{'Use the word: ' + word + '.' if word else 'Choose a relevant word.'} "
                         f"Return a JSON object with: "
                         f"- 'word': the vocabulary word or phrase in {target_language}. "
-                        f"- 'definition': a concise English definition (max 5 words). "
-                        f"- 'example_sentence': an example sentence using the word in {target_language}, with English translation in parentheses. "
-                        f"- 'image': a placeholder URL for an image (e.g., 'https://via.placeholder.com/60'). "
+                        f"- 'translation': the primary English translation. "
+                        f"- 'type': part of speech (e.g., noun, verb, adjective, interjection). "
+                        f"- 'english_equivalents': list of English synonyms or equivalent words/phrases (include the translation). "
+                        f"- 'definition': a concise definition in {target_language} (max 10 words). "
+                        f"- 'english_definition': a concise English definition (max 10 words). "
+                        f"- 'example_sentence': a simple example sentence in {target_language}. "
+                        f"- 'english_sentence': the English translation of the example sentence. "
+                        f"- 'options': 4 multiple-choice options for the translation (1 correct, 3 incorrect), each with 'id' (string) and 'option_text'. "
                         f"Example: "
                         f"```json\n"
                         f"{{\n"
-                        f"  \"word\": \"こんにちは\",\n"
-                        f"  \"definition\": \"Hello greeting\",\n"
-                        f"  \"example_sentence\": \"こんにちは、お元気ですか？ (Hello, how are you?)\",\n"
-                        f"  \"image\": \"https://via.placeholder.com/60\"\n"
+                        f"  \"word\": \"casa\",\n"
+                        f"  \"translation\": \"house\",\n"
+                        f"  \"type\": \"noun\",\n"
+                        f"  \"english_equivalents\": [\"house\", \"home\"],\n"
+                        f"  \"definition\": \"Lugar donde las personas viven\",\n"
+                        f"  \"english_definition\": \"Place where people live\",\n"
+                        f"  \"example_sentence\": \"Vivo en una casa grande.\",\n"
+                        f"  \"english_sentence\": \"I live in a large house.\",\n"
+                        f"  \"options\": [\n"
+                        f"    {{\"id\": \"1\", \"option_text\": \"house\"}},\n"
+                        f"    {{\"id\": \"2\", \"option_text\": \"car\"}},\n"
+                        f"    {{\"id\": \"3\", \"option_text\": \"tree\"}},\n"
+                        f"    {{\"id\": \"4\", \"option_text\": \"book\"}}\n"
+                        f"  ]\n"
                         f"}}\n"
                         f"```"
                     )
                 },
                 {"role": "user", "content": f"Generate a flashcard for {category} in {target_language}."}
             ],
-            max_tokens=200,
+            max_tokens=300,
             temperature=0.5
         )
         raw_output = response.choices[0].message.content.strip()
@@ -172,19 +224,35 @@ async def generate_flashcard(category: str, target_language: str, db: AsyncSessi
         
         result = json.loads(raw_output)
         
-        if not isinstance(result, dict) or not all(key in result for key in ["word", "definition", "example_sentence", "image"]):
-            return {
-                "word": "error",
-                "definition": "Invalid response",
-                "example_sentence": "Error occurred",
-                "image": "https://via.placeholder.com/60"
-            }
-        
+        if not isinstance(result, dict) or not all(
+            key in result
+            for key in [
+                "word",
+                "translation",
+                "type",
+                "english_equivalents",
+                "definition",
+                "english_definition",
+                "example_sentence",
+                "english_sentence",
+                "options"
+            ]
+        ):
+            raise ValueError("Invalid flashcard response format")
+
         flashcard_data = {
             "word": result["word"].strip(),
+            "translation": result["translation"].strip(),
+            "type": result["type"].strip(),
+            "english_equivalents": [eq.strip() for eq in result["english_equivalents"]],
             "definition": result["definition"].strip(),
+            "english_definition": result["english_definition"].strip(),
             "example_sentence": result["example_sentence"].strip(),
-            "image": result["image"] or "https://via.placeholder.com/60"
+            "english_sentence": result["english_sentence"].strip(),
+            "options": [
+                {"id": opt["id"], "option_text": opt["option_text"].strip()}
+                for opt in result["options"]
+            ]
         }
 
         if db:
@@ -197,7 +265,13 @@ async def generate_flashcard(category: str, target_language: str, db: AsyncSessi
             
             flashcard = Flashcard(
                 word=flashcard_data["word"],
-                translation=flashcard_data["definition"],
+                translation=flashcard_data["translation"],
+                type=flashcard_data["type"],
+                english_equivalents=flashcard_data["english_equivalents"],
+                definition=flashcard_data["definition"],
+                english_definition=flashcard_data["english_definition"],
+                example_sentence=flashcard_data["example_sentence"],
+                english_sentence=flashcard_data["english_sentence"],
                 category_id=category_obj.id,
                 used_count=1
             )
@@ -207,12 +281,48 @@ async def generate_flashcard(category: str, target_language: str, db: AsyncSessi
             flashcard_data["flashcard_id"] = flashcard.id
 
         return flashcard_data
-    except Exception as e:
+    except (OpenAIError, ValueError, json.JSONDecodeError) as e:
+        if db:
+            # Try cached flashcard
+            result = await db.execute(
+                select(Flashcard).filter(Flashcard.category_id == 1).order_by(Flashcard.used_count.asc()).limit(1)
+            )
+            cached = result.scalars().first()
+            if cached:
+                return {
+                    "flashcard_id": cached.id,
+                    "word": cached.word,
+                    "translation": cached.translation,
+                    "type": cached.type or "noun",
+                    "english_equivalents": cached.english_equivalents or [cached.translation],
+                    "definition": cached.definition or "A word",
+                    "english_definition": cached.english_definition or "A word",
+                    "example_sentence": cached.example_sentence or f"{cached.word} example.",
+                    "english_sentence": cached.english_sentence or f"{cached.translation} example.",
+                    "options": [
+                        {"id": "1", "option_text": cached.translation},
+                        {"id": "2", "option_text": "incorrect1"},
+                        {"id": "3", "option_text": "incorrect2"},
+                        {"id": "4", "option_text": "incorrect3"}
+                    ]
+                }
+        # Generic fallback
         return {
-            "word": f"Error: {str(e)}",
-            "definition": "Translation error",
-            "example_sentence": "Error occurred",
-            "image": "https://via.placeholder.com/60"
+            "flashcard_id": 0,
+            "word": "word",
+            "translation": "word",
+            "type": "noun",
+            "english_equivalents": ["word"],
+            "definition": "A vocabulary item",
+            "english_definition": "A vocabulary item",
+            "example_sentence": f"A simple {target_language} word.",
+            "english_sentence": "A simple word.",
+            "options": [
+                {"id": "1", "option_text": "word"},
+                {"id": "2", "option_text": "incorrect1"},
+                {"id": "3", "option_text": "incorrect2"},
+                {"id": "4", "option_text": "incorrect3"}
+            ]
         }
 
 async def generate_situation(category: str, lesson: str, target_language: str) -> dict:
@@ -273,7 +383,6 @@ async def chat_message(situation: str, conversation: list, target_language: str,
         }
     
     try:
-        # Format conversation history
         messages = [
             {
                 "role": "system",
@@ -299,7 +408,7 @@ async def chat_message(situation: str, conversation: list, target_language: str,
             messages.append({"role": role, "content": msg["text"]})
 
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gmt-4o-mini",
             messages=messages,
             max_tokens=100,
             temperature=0.5
@@ -360,7 +469,6 @@ async def evaluate_conversation(conversation: list, target_language: str) -> dic
         }
     
     try:
-        # Format conversation for evaluation
         conversation_text = "\n".join([f"{msg['speaker']}: {msg['text']}" for msg in conversation])
         response = await client.chat.completions.create(
             model="gpt-4o-mini",

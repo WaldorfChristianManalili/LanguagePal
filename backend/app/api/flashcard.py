@@ -6,8 +6,8 @@ from app.models.flashcard import Flashcard
 from app.models.user import User
 from app.models.category import Category
 from app.models.lesson import Lesson
-from app.models.progress import Progress
-from app.schemas.flashcard import FlashcardResponse, SubmitFlashcardRequest, SubmitFlashcardResponse
+from app.models.flashcard_history import FlashcardHistory
+from app.schemas.flashcard import FlashcardResponse
 from app.database import get_db
 from app.utils.openai import generate_flashcard
 from app.utils.jwt import get_current_user
@@ -21,6 +21,68 @@ async def get_user(db: AsyncSession, user_id: int) -> User:
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+async def is_repeated_lesson(db: AsyncSession, user_id: int, lesson_id: int) -> bool:
+    """Check if the user has previously completed this lesson."""
+    result = await db.execute(
+        select(FlashcardHistory).filter(
+            FlashcardHistory.user_id == user_id,
+            FlashcardHistory.lesson_id == lesson_id
+        )
+    )
+    return bool(result.scalars().first())
+
+async def get_used_flashcard_words(db: AsyncSession, user_id: int, lesson_id: int) -> set:
+    """Get words of flashcards previously used by the user, excluding the current lesson if repeated."""
+    query = select(Flashcard.word).join(
+        FlashcardHistory,
+        FlashcardHistory.flashcard_id == Flashcard.id
+    ).filter(FlashcardHistory.user_id == user_id)
+    
+    if await is_repeated_lesson(db, user_id, lesson_id):
+        query = query.filter(FlashcardHistory.lesson_id != lesson_id)
+    
+    result = await db.execute(query)
+    return {word for word in result.scalars().all()}
+
+async def get_valid_flashcard_data(category: Category, user_language: str, db: AsyncSession, user_id: int, lesson_id: int, word: str = None) -> dict:
+    """Generate or fetch a valid flashcard, avoiding duplicates for new lessons."""
+    used_words = await get_used_flashcard_words(db, user_id, lesson_id)
+    max_attempts = 3
+    for _ in range(max_attempts):
+        flashcard_data = await generate_flashcard(category.name, user_language, db, word)
+        if "Error" in flashcard_data["word"]:
+            continue
+        if flashcard_data["word"] not in used_words or await is_repeated_lesson(db, user_id, lesson_id):
+            return flashcard_data
+    # Try a cached flashcard
+    result = await db.execute(
+        select(Flashcard)
+        .filter(Flashcard.category_id == category.id)
+        .filter(~Flashcard.word.in_(used_words) | (Flashcard.word == word))
+        .order_by(Flashcard.used_count.asc())
+        .limit(1)
+    )
+    cached = result.scalars().first()
+    if cached:
+        return {
+            "flashcard_id": cached.id,
+            "word": cached.word,
+            "translation": cached.translation,
+            "type": cached.type or "noun",
+            "english_equivalents": cached.english_equivalents or [cached.translation],
+            "definition": cached.definition or "A word",
+            "english_definition": cached.english_definition or "A word",
+            "example_sentence": cached.example_sentence or f"{cached.word} example.",
+            "english_sentence": cached.english_sentence or f"{cached.translation} example.",
+            "options": [
+                {"id": "1", "option_text": cached.translation},
+                {"id": "2", "option_text": "incorrect1"},
+                {"id": "3", "option_text": "incorrect2"},
+                {"id": "4", "option_text": "incorrect3"}
+            ]
+        }
+    raise HTTPException(status_code=500, detail="Failed to generate valid flashcard")
 
 @router.get("/generate", response_model=FlashcardResponse)
 async def get_flashcard(
@@ -43,28 +105,58 @@ async def get_flashcard(
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
+    # Check if lesson is repeated
+    is_repeat = await is_repeated_lesson(db, user_id, lesson_id)
+
     # Fetch cached flashcards
+    used_words = await get_used_flashcard_words(db, user_id, lesson_id) if not is_repeat else set()
     result = await db.execute(
-        select(Flashcard).filter(Flashcard.category_id == lesson.category_id)
+        select(Flashcard)
+        .filter(Flashcard.category_id == lesson.category_id)
+        .filter(~Flashcard.word.in_(used_words) if not is_repeat else True)
     )
     flashcards = result.scalars().all()
 
-    # Generate new flashcard if none exist
-    if not flashcards:
-        flashcard_data = await generate_flashcard(category.name, user_language, db)
+    # Generate new flashcard if none exist or for variety
+    if not flashcards or not is_repeat:
+        flashcard_data = await get_valid_flashcard_data(category, user_language, db, user_id, lesson_id)
+        flashcard_id = flashcard_data["flashcard_id"]
+        if flashcard_id:  # Flashcard was saved by generate_flashcard
+            history = FlashcardHistory(
+                user_id=user_id,
+                flashcard_id=flashcard_id,
+                lesson_id=lesson_id
+            )
+            db.add(history)
+            await db.commit()
         return {
-            "flashcard_id": flashcard_data.get("flashcard_id", 0),
+            "flashcard_id": flashcard_id,
             "word": flashcard_data["word"],
             "translation": flashcard_data["translation"],
+            "type": flashcard_data["type"],
+            "english_equivalents": flashcard_data["english_equivalents"],
+            "definition": flashcard_data["definition"],
+            "english_definition": flashcard_data["english_definition"],
+            "example_sentence": flashcard_data["example_sentence"],
+            "english_sentence": flashcard_data["english_sentence"],
             "category": category.name,
-            "lesson_id": lesson_id
+            "lesson_id": lesson_id,
+            "options": flashcard_data["options"],
         }
 
-    # Select least-used flashcard
+    # Select least-used flashcard for repeated lessons
     flashcard = min(flashcards, key=lambda f: (f.used_count, f.last_used_at or datetime.min))
     flashcard.used_count += 1
     flashcard.last_used_at = datetime.utcnow()
     db.add(flashcard)
+
+    # Record history
+    history = FlashcardHistory(
+        user_id=user_id,
+        flashcard_id=flashcard.id,
+        lesson_id=lesson_id
+    )
+    db.add(history)
 
     # Reset used_count if all flashcards are heavily used
     if all(f.used_count > 10 for f in flashcards):
@@ -74,61 +166,19 @@ async def get_flashcard(
 
     await db.commit()
 
+    # Generate additional data for cached flashcard
+    flashcard_data = await get_valid_flashcard_data(category, user_language, db, user_id, lesson_id, word=flashcard.word)
     return {
         "flashcard_id": flashcard.id,
         "word": flashcard.word,
         "translation": flashcard.translation,
+        "type": flashcard_data["type"],
+        "english_equivalents": flashcard_data["english_equivalents"],
+        "definition": flashcard_data["definition"],
+        "english_definition": flashcard_data["english_definition"],
+        "example_sentence": flashcard_data["example_sentence"],
+        "english_sentence": flashcard_data["english_sentence"],
         "category": category.name,
-        "lesson_id": lesson_id
-    }
-
-@router.post("/submit", response_model=SubmitFlashcardResponse)
-async def submit_flashcard(
-    request: SubmitFlashcardRequest,
-    user_id: int = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Submit a flashcard answer and store the result in progress."""
-    user = await get_user(db, user_id)
-
-    # Fetch flashcard
-    result = await db.execute(select(Flashcard).filter(Flashcard.id == request.flashcard_id))
-    flashcard = result.scalars().first()
-    if not flashcard:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
-
-    # Evaluate answer
-    is_correct = request.user_answer.strip().lower() == flashcard.translation.strip().lower()
-    feedback = (
-        "Correct! Well done." if is_correct
-        else f"Incorrect. The correct translation is: {flashcard.translation}"
-    )
-
-    # Store result in progress
-    result_data = {
-        "is_correct": is_correct,
-        "feedback": feedback,
-        "word": flashcard.word,
-        "translation": flashcard.translation,
-        "user_answer": request.user_answer,
-        "flashcard_id": flashcard.id
-    }
-    progress = Progress(
-        user_id=user_id,
-        category_id=flashcard.category_id,
-        activity_id=f"flashcard-{request.flashcard_id}",
-        type="flashcard",
-        completed=True,
-        result=str(result_data)
-    )
-    db.add(progress)
-    await db.commit()
-
-    return {
-        "is_correct": is_correct,
-        "feedback": feedback,
-        "translation": flashcard.translation,
-        "result_id": progress.id,
-        "flashcard_id": flashcard.id,
-        "user_answer": request.user_answer
+        "lesson_id": lesson_id,
+        "options": flashcard_data["options"],
     }

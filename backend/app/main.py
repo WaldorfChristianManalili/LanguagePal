@@ -4,12 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from app.database import engine, Base, get_db
 from app.db_seed import seed_database
-from app.api import auth, sentence, flashcard, dialogue, category, dashboard  # Add dashboard
+from app.api import auth, sentence, flashcard, dialogue, category, dashboard, pexels  # Add pexels
 import logging
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(level=logging.INFO)
     logging.info("Initializing database...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -33,11 +32,12 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(category.router, prefix="/category", tags=["Category"])
-app.include_router(sentence.router, prefix="/sentence", tags=["Sentence Construction"])
-app.include_router(flashcard.router, prefix="/flashcard", tags=["Flashcard Vocabulary"])
-app.include_router(dialogue.router, prefix="/dialogue", tags=["Simulated Dialogues"])
+app.include_router(category.router, prefix="/api/category", tags=["Category"])
+app.include_router(sentence.router, prefix="/api/sentence", tags=["Sentence Construction"])
+app.include_router(flashcard.router, prefix="/api/flashcard", tags=["Flashcard Vocabulary"])  # Changed to /api/flashcard
+app.include_router(dialogue.router, prefix="/api/dialogue", tags=["Simulated Dialogues"])
 app.include_router(dashboard.router, prefix="", tags=["Dashboard"])
+app.include_router(pexels.router, prefix="/api/pexels", tags=["Pexels"])  # Added pexels
 
 @app.get("/")
 async def read_root():
@@ -49,6 +49,5 @@ async def test_database(db: AsyncSession = Depends(get_db)):
 
 @app.get("/test-routes")
 async def print_routes():
-    print("Registered Routes:")
-    for route in app.routes:
-        print(route.path)
+    routes = [route.path for route in app.routes]
+    return {"routes": routes}
