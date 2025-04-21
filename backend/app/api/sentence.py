@@ -1,7 +1,7 @@
 import logging
 import random
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
@@ -20,6 +20,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sentence"])
+
+# Dependency to get the Request object
+def get_request(request: Request) -> Request:
+    """Dependency to provide the Request object."""
+    return request
+
+# Store used sentence IDs in a session-specific context
+def get_session_state(request: Request = Depends(get_request)):
+    """Get or initialize session state for tracking used sentences."""
+    if not hasattr(request.state, "used_sentence_ids"):
+        request.state.used_sentence_ids = []
+    return request.state.used_sentence_ids
 
 async def get_user(db: AsyncSession, user_id: int) -> User:
     """Fetch user by ID, raising 404 if not found."""
@@ -46,30 +58,49 @@ async def get_translation(db: AsyncSession, sentence_id: int, language: str, fla
     if translation:
         return translation
 
-    # Use flashcard words if provided, otherwise fetch category
+    # Fetch category
     result = await db.execute(select(Category).filter(Category.id == sentence.category_id))
     category = result.scalars().first()
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
+    # Prepare prompt with explicit request for English translation
     sentence_prompt = (
-        f"A simple sentence using the words {', '.join(flashcard_words)}" if flashcard_words
-        else f"A simple, grammatically correct sentence about {category.name}"
+        f"""
+        Generate a simple sentence in {language} for the category '{category.name}' suitable for language learners.
+        {"Use the words: " + ", ".join(flashcard_words) + "." if flashcard_words else "Choose appropriate words."}
+        Provide the response in JSON format with the following structure:
+        {{
+            "words": ["word1", "word2", ...],
+            "sentence": "Full sentence in {language}",
+            "english_sentence": "English translation",
+            "hints": [
+                {{"text": "Hint text", "usefulness": number}},
+                ...
+            ],
+            "explanation": "Detailed explanation including the English translation"
+        }}
+        """
     )
     translation_result = await translate_sentence(sentence_prompt, language)
     logger.info(f"Translation result for sentence_id {sentence_id}: {translation_result}")
 
-    if not isinstance(translation_result, dict) or not all(key in translation_result for key in ["words", "sentence", "hints", "explanation"]):
+    # Parse and validate result
+    if not isinstance(translation_result, dict):
         logger.error(f"Invalid translation response: {translation_result}")
         raise HTTPException(status_code=500, detail="Invalid translation response")
-    if "error" in translation_result["sentence"].lower():
-        logger.error(f"Translation service error: {translation_result['sentence']}")
-        raise HTTPException(status_code=500, detail="Translation service unavailable")
+
+    required_keys = ["words", "sentence", "english_sentence", "hints", "explanation"]
+    missing_keys = [key for key in required_keys if key not in translation_result]
+    if missing_keys:
+        logger.error(f"Missing required keys in translation result: {missing_keys}")
+        raise HTTPException(status_code=500, detail=f"Missing required keys: {missing_keys}")
 
     translated_words = [word.strip() for word in translation_result["words"] if word.strip() not in [",", "，"]]
     translated_text = translation_result["sentence"].strip().rstrip(",").rstrip("，")
-    
-    # Validate sentence: Ensure it has at least 2 words and is not just greetings
+    english_text = translation_result["english_sentence"].strip()
+
+    # Validate sentence
     if len(translated_words) < 2:
         logger.error(f"Sentence too short: {translated_text}")
         raise HTTPException(status_code=500, detail="Generated sentence is too short")
@@ -79,6 +110,10 @@ async def get_translation(db: AsyncSession, sentence_id: int, language: str, fla
 
     hints = [hint for hint in translation_result["hints"] if isinstance(hint, dict) and "text" in hint]
     explanation = translation_result["explanation"] or "No explanation available"
+
+    # Update Sentence.text with English translation
+    sentence.text = english_text
+    db.add(sentence)
 
     result = await db.execute(
         select(SentenceTranslation).filter(
@@ -104,12 +139,25 @@ async def get_scrambled_sentence(
     category_name: str,
     user_id: int,
     db: AsyncSession,
+    lesson_id: int,
     flashcard_words: str = None,
     sentence_id: int = None,
-    harder: bool = False
+    harder: bool = False,
+    request: Request = None  # Make request optional
 ):
-    """Generate a scrambled sentence for the given category and user."""
-    logger.info(f"Generating scrambled sentence for category: {category_name}, user: {user_id}, sentence_id: {sentence_id}, flashcard_words: {flashcard_words}, harder: {harder}")
+    """Generate a new scrambled sentence for the given category and user, unique within the lesson."""
+    logger.info(f"Generating scrambled sentence for category: {category_name}, user: {user_id}, lesson_id: {lesson_id}, sentence_id: {sentence_id}, flashcard_words: {flashcard_words}, harder: {harder}")
+    
+    # Use a global dictionary for lesson-scoped session state
+    global_session_state = getattr(get_scrambled_sentence, "_session_state", {})
+    if not global_session_state:
+        get_scrambled_sentence._session_state = global_session_state
+    
+    state_key = f"used_sentence_ids_{lesson_id}"
+    if state_key not in global_session_state:
+        global_session_state[state_key] = []
+    session_state = global_session_state[state_key]
+    
     user = await get_user(db, user_id)
     user_language = user.learning_language
 
@@ -135,7 +183,7 @@ async def get_scrambled_sentence(
         logger.error(f"Category '{category_name}' not found")
         raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found")
 
-    # If sentence_id is provided, fetch from DB
+    # If sentence_id is provided, fetch from DB (e.g., for retries)
     if sentence_id:
         result = await db.execute(select(Sentence).filter_by(id=sentence_id))
         sentence = result.scalars().first()
@@ -149,45 +197,72 @@ async def get_scrambled_sentence(
         response = {
             "sentence_id": sentence.id,
             "scrambled_words": shuffled_words,
-            "original_sentence": translation.translated_text,  # Japanese sentence
-            "english_sentence": sentence.text,  # English sentence (source)
+            "original_sentence": translation.translated_text,
+            "english_sentence": sentence.text,
             "hints": [{"text": hint["text"], "usefulness": hint["usefulness"]} for hint in json.loads(translation.hints or "[]")],
             "explanation": translation.explanation if translation.explanation else "No explanation available"
         }
         logger.info(f"Returning scrambled sentence for sentence_id {sentence_id}: {response}")
         return response
 
-    # Fetch sentences for category
-    result = await db.execute(
-        select(Sentence).filter(Sentence.category_id == category.id)
+    # Generate a new sentence
+    sentence_prompt = (
+        f"""
+        Generate a simple sentence in {user_language} for the category '{category_name}' suitable for language learners.
+        {"Use the words: " + ", ".join(flashcard_words_list) + "." if flashcard_words_list else "Choose appropriate words."}
+        {"Make it slightly more complex." if harder else "Keep it simple."}
+        Ensure the sentence is unique, novel, and significantly different in structure and vocabulary from previously generated ones.
+        Provide the response in JSON format with the following structure:
+        {{
+            "words": ["word1", "word2", ...],
+            "sentence": "Full sentence in {user_language}",
+            "english_sentence": "English translation",
+            "hints": [
+                {{"text": "Hint text", "usefulness": number}},
+                ...
+            ],
+            "explanation": "Detailed explanation including the English translation"
+        }}
+        """
     )
-    sentences = result.scalars().all()
+    translation_result = await translate_sentence(sentence_prompt, user_language)
+    logger.info(f"New sentence translation result: {translation_result}")
 
-    # Generate new sentence if none exist
-    if not sentences:
-        sentence_prompt = (
-            f"A simple sentence using the words {', '.join(flashcard_words_list)}" if flashcard_words_list
-            else f"A simple, grammatically correct sentence about {category_name}"
-        )
-        if harder:
-            sentence_prompt = f"A more complex sentence about {category_name}, incorporating {', '.join(flashcard_words_list)} if provided"
-        
-        translation_result = await translate_sentence(sentence_prompt, user_language)
-        logger.info(f"New sentence translation result: {translation_result}")
+    # Parse and validate result
+    if not isinstance(translation_result, dict):
+        logger.error(f"Invalid translation result: {translation_result}")
+        raise HTTPException(status_code=500, detail="Failed to generate valid translation")
 
-        if "error" in translation_result["sentence"].lower():
-            logger.error(f"Failed to generate sentence: {translation_result['sentence']}")
-            raise HTTPException(status_code=500, detail="Failed to generate sentence")
-        
-        # Validate translation
-        translated_text = translation_result.get("translated_text", "").strip()
-        source_text = translation_result.get("sentence", "").strip()
-        if not translated_text or not source_text:
-            logger.error(f"Invalid translation result: {translation_result}")
-            raise HTTPException(status_code=500, detail="Failed to generate valid translation")
+    required_keys = ["words", "sentence", "english_sentence", "hints", "explanation"]
+    missing_keys = [key for key in required_keys if key not in translation_result]
+    if missing_keys:
+        logger.error(f"Missing required keys in translation result: {missing_keys}")
+        raise HTTPException(status_code=500, detail=f"Missing required keys: {missing_keys}")
 
+    translated_text = translation_result["sentence"].strip()
+    english_text = translation_result["english_sentence"].strip()
+    translated_words = [word.strip() for word in translation_result["words"] if word.strip() not in [",", "，"]]
+    hints = [hint for hint in translation_result["hints"] if isinstance(hint, dict) and "text" in hint]
+    explanation = translation_result["explanation"] or "No explanation available"
+
+    # Validate sentence
+    if len(translated_words) < 2:
+        logger.error(f"Sentence too short: {translated_text}")
+        raise HTTPException(status_code=500, detail="Generated sentence is too short")
+    if all(word in ["こんにちは", "おはよう", "こんばんは"] for word in translated_words):
+        logger.error(f"Invalid sentence, contains only greetings: {translated_text}")
+        raise HTTPException(status_code=500, detail="Generated sentence is invalid")
+
+    # Check for duplicate sentence
+    result = await db.execute(
+        select(Sentence).filter(Sentence.text == english_text, Sentence.category_id == category.id)
+    )
+    sentence = result.scalars().first()
+    if sentence and sentence.id not in session_state:
+        logger.info(f"Sentence '{english_text}' already exists, using it")
+    else:
         sentence = Sentence(
-            text=source_text,  # Store source (English) sentence
+            text=english_text,
             category_id=category.id,
             used_count=0,
             last_used_at=None
@@ -195,10 +270,23 @@ async def get_scrambled_sentence(
         db.add(sentence)
         await db.commit()
         await db.refresh(sentence)
-        sentences = [sentence]
 
-    # Select least-used sentence
-    sentence = min(sentences, key=lambda s: (s.used_count, s.last_used_at or datetime.min))
+    # Ensure the sentence hasn’t been used in this session
+    if sentence.id in session_state:
+        logger.warning(f"Sentence ID {sentence.id} already used in session, generating another")
+        # Recursively call to generate a new sentence
+        return await get_scrambled_sentence(
+            category_name=category_name,
+            user_id=user_id,
+            db=db,
+            lesson_id=lesson_id,
+            flashcard_words=flashcard_words,
+            harder=harder
+        )
+
+    # Add to session state
+    session_state.append(sentence.id)
+    logger.info(f"Added sentence ID {sentence.id} to session state: {session_state}")
 
     # Get or create translation
     translation = await get_translation(db, sentence.id, user_language, flashcard_words_list)
@@ -210,12 +298,6 @@ async def get_scrambled_sentence(
     sentence.last_used_at = datetime.utcnow()
     db.add(sentence)
 
-    # Reset used_count if all sentences are heavily used
-    if all(s.used_count > 10 for s in sentences):
-        for s in sentences:
-            s.used_count = 0
-        db.add_all(sentences)
-
     try:
         await db.commit()
     except Exception as e:
@@ -225,8 +307,8 @@ async def get_scrambled_sentence(
     response = {
         "sentence_id": sentence.id,
         "scrambled_words": shuffled_words,
-        "original_sentence": translation.translated_text,  # Japanese sentence
-        "english_sentence": sentence.text,  # English sentence (source)
+        "original_sentence": translation.translated_text,
+        "english_sentence": sentence.text,
         "hints": [{"text": hint["text"], "usefulness": hint["usefulness"]} for hint in json.loads(translation.hints or "[]")],
         "explanation": translation.explanation if translation.explanation else "No explanation available"
     }
@@ -236,6 +318,7 @@ async def get_scrambled_sentence(
 @router.get("/scramble", response_model=SentenceResponse)
 async def get_scrambled_sentence_route(
     lesson_id: int,
+    request: Request,  # Move the request parameter up
     flashcard_words: str = None,
     user_id: int = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -251,7 +334,14 @@ async def get_scrambled_sentence_route(
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    return await get_scrambled_sentence(category.name, user_id, db, flashcard_words)
+    return await get_scrambled_sentence(
+        category_name=category.name,
+        user_id=user_id,
+        db=db,
+        lesson_id=lesson_id,
+        flashcard_words=flashcard_words,
+        request=request
+    )
 
 @router.post("/submit", response_model=SubmitSentenceResponse)
 async def submit_sentence(
@@ -266,7 +356,6 @@ async def submit_sentence(
         text = text.replace(',', '').replace('.', '').replace('!', '').replace('?', '')
         return ''.join(text.split()).lower()
 
-    # Fetch user, sentence, and translation
     user = await get_user(db, user_id)
     result = await db.execute(select(Sentence).filter(Sentence.id == request.sentence_id))
     sentence = result.scalars().first()
@@ -275,7 +364,6 @@ async def submit_sentence(
 
     translation = await get_translation(db, request.sentence_id, user.learning_language)
 
-    # Normalize and compare
     user_answer_normalized = normalize_text(request.user_answer)
     translated_text_normalized = normalize_text(translation.translated_text)
     is_correct = user_answer_normalized == translated_text_normalized
@@ -284,7 +372,6 @@ async def submit_sentence(
         else f"Incorrect. The correct sentence is: {translation.translated_text}"
     )
 
-    # Store result in progress
     result_data = {
         "is_correct": is_correct,
         "feedback": feedback,
@@ -307,7 +394,7 @@ async def submit_sentence(
     return {
         "is_correct": is_correct,
         "feedback": feedback,
-        "Translated_sentence": translation.translated_text,
+        "translated_sentence": translation.translated_text,
         "result_id": progress.id,
         "is_pinned": False,
         "explanation": translation.explanation,

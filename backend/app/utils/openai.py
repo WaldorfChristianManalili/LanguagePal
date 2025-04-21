@@ -21,13 +21,13 @@ api_key = os.getenv("OPENAI_API_KEY")
 client = AsyncOpenAI(api_key=api_key, max_retries=0) if api_key else None
 
 async def translate_sentence(sentence: str, target_language: str) -> dict:
-    # Unchanged, keeping your existing function
     if not client:
         return {
             "words": ["OpenAI API key not provided"],
             "sentence": "Translation disabled",
             "hints": [],
-            "explanation": "Translation disabled"
+            "explanation": "Translation disabled",
+            "english_sentence": "Translation disabled"  # Added for consistency
         }
     
     try:
@@ -40,22 +40,25 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
                         f"You are Language Pal, a friendly language tutor. Translate '{sentence}' to {target_language} and return a JSON object with: "
                         f"- 'words': array of words/phrases, excluding commas and punctuation (e.g., ['お元気', 'です', 'か']). "
                         f"- 'sentence': full translated sentence without commas. "
+                        f"- 'english_sentence': the English translation of the sentence. "
                         f"- 'hints': 3 short hints for arranging the sentence, focusing on structure or meaning (e.g., 'Starts with a greeting'). "
                         f"  Exclude punctuation hints (e.g., 'Ends with a question mark'). Format as [{{\"text\": string, \"usefulness\": number}}], with scores (3=high, 2=medium, 1=low). "
                         f"- 'explanation': explain why the translated sentence is structured this way, in a natural, engaging tone like teaching a curious student. "
                         f"  Use markdown bullet points (e.g., `- **こんにちは**: ...`) for each word/phrase. Focus on grammar, structure, and cultural context. "
+                        f"  Include the English translation in the explanation (e.g., 'This sentence translates to ...'). "
                         f"  Do not explain punctuation (e.g., '?', '.', '¿'). "
                         f"Example: "
                         f"```json\n"
                         f"{{\n"
                         f"  \"words\": [\"コーヒー\", \"が\", \"必要\", \"です\"],\n"
                         f"  \"sentence\": \"コーヒー が 必要 です\",\n"
+                        f"  \"english_sentence\": \"I need coffee\",\n"
                         f"  \"hints\": [\n"
                         f"    {{\"text\": \"The sentence starts with the subject.\", \"usefulness\": 3}},\n"
                         f"    {{\"text\": \"必要 is not a verb, but a noun meaning necessity.\", \"usefulness\": 2}},\n"
                         f"    {{\"text\": \"The natural Japanese sentence structure is: [Subject] が [Description] です.\", \"usefulness\": 1}}\n"
                         f"  ],\n"
-                        f"  \"explanation\": \"Explain why 'コーヒー が 必要 です' is structured this way.\"\n"
+                        f"  \"explanation\": \"This sentence translates to 'I need coffee'. Here's why it's structured this way:\\n"
                         f"}}\n"
                         f"```"
                     )
@@ -78,20 +81,23 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
             return {
                 "words": words,
                 "sentence": sentence,
+                "english_sentence": "Invalid response format",  # Added
                 "hints": [],
                 "explanation": "Invalid response format"
             }
         
-        if not isinstance(result, dict) or not all(key in result for key in ["words", "sentence", "hints", "explanation"]):
+        if not isinstance(result, dict) or not all(key in result for key in ["words", "sentence", "english_sentence", "hints", "explanation"]):
             return {
                 "words": ["Invalid response format"],
                 "sentence": "Translation error",
+                "english_sentence": "Translation error",  # Added
                 "hints": [],
                 "explanation": "Translation error"
             }
         
         words = [word.strip() for word in result.get("words", []) if word.strip() not in [",", "，", "?", ".", "!", "¿", "¡"]]
         sentence = result.get("sentence", " ".join(words)).strip().rstrip(",").rstrip("，")
+        english_sentence = result.get("english_sentence", "Translation not provided").strip()
         hints = result.get("hints", [])
         
         parsed_hints = []
@@ -117,6 +123,7 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
         return {
             "words": words,
             "sentence": sentence,
+            "english_sentence": english_sentence,
             "hints": parsed_hints,
             "explanation": explanation
         }
@@ -124,6 +131,7 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
         return {
             "words": ["Translation error: JSON decode error"],
             "sentence": "Translation error",
+            "english_sentence": "Translation error",
             "hints": [],
             "explanation": "Translation error"
         }
@@ -131,10 +139,11 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
         return {
             "words": [f"Translation error: {str(e)}"],
             "sentence": "Translation error",
+            "english_sentence": "Translation error",
             "hints": [],
             "explanation": "Translation error"
         }
-
+        
 async def generate_flashcard(
     category: str,
     target_language: str,
@@ -202,55 +211,52 @@ async def generate_flashcard(
         try:
             logger.info(f"Generating flashcard: category={category}, lesson={lesson_name}, target_language={target_language}, harder={harder}, attempt={attempts + 1}")
             
-            # Simplified prompt
-            word_instruction = f"Use the word: {word}." if word else (
-                f"Choose a single word for the lesson '{lesson_name}' (e.g., 名前 for 'Saying your name')."
-            )
             difficulty_instruction = (
-                "Choose a less common word (A2 level)." if harder else
-                "Choose a basic word (A1 level)."
+                "Use a slightly advanced word (A2 level)." if harder else
+                "Use a basic word (A1 level)."
             )
             excluded_instruction = (
-                f"Absolutely avoid these words: {', '.join(excluded_words + list(failed_words))}."
+                f"**CRITICAL**: Do NOT use any of these words: {', '.join(excluded_words + list(failed_words))}. "
+                "Ensure the generated word is completely new and not in the excluded list."
                 if (excluded_words or failed_words) else ""
             )
             new_lesson_instruction = (
-                "Ensure the word is unique for this user." if is_new_lesson else ""
+                "Choose a word that is uncommon but suitable for beginners." if is_new_lesson else ""
             )
-            
+
             prompt = (
-                f"Generate a flashcard for a single word in {target_language} for the category '{category}' and lesson '{lesson_name}'. "
-                f"{word_instruction} {difficulty_instruction} {excluded_instruction} {new_lesson_instruction} "
-                f"The word must be a single kanji or kana term, not a phrase. "
-                f"Return a JSON object with: "
-                f"- 'word': the word (e.g., '名前'). "
-                f"- 'translation': English translation. "
-                f"- 'type': part of speech (noun, verb, etc.). "
-                f"- 'english_equivalents': list of English synonyms. "
-                f"- 'definition': short definition in {target_language}. "
-                f"- 'english_definition': short English definition. "
-                f"- 'example_sentence': simple sentence in {target_language}. "
-                f"- 'english_sentence': English translation of the sentence. "
-                f"- 'options': 4 multiple-choice options (1 correct, 3 incorrect, related to '{category}'). "
-                f"Example: "
-                f"```json\n"
-                f"{{\n"
-                f"  \"word\": \"名前\",\n"
-                f"  \"translation\": \"name\",\n"
-                f"  \"type\": \"noun\",\n"
-                f"  \"english_equivalents\": [\"name\", \"title\"],\n"
-                f"  \"definition\": \"人を識別する語\",\n"
-                f"  \"english_definition\": \"Word identifying a person\",\n"
-                f"  \"example_sentence\": \"私の名前は田中です。\",\n"
-                f"  \"english_sentence\": \"My name is Tanaka.\",\n"
-                f"  \"options\": [\n"
-                f"    {{\"id\": \"1\", \"option_text\": \"name\"}},\n"
-                f"    {{\"id\": \"2\", \"option_text\": \"age\"}},\n"
-                f"    {{\"id\": \"3\", \"option_text\": \"job\"}},\n"
-                f"    {{\"id\": \"4\", \"option_text\": \"city\"}}\n"
-                f"  ]\n"
-                f"}}\n"
-                f"```"
+                f"Create a flashcard for a single word in {target_language} for the category '{category}' and lesson '{lesson_name}'. "
+                f"{excluded_instruction} {difficulty_instruction} {new_lesson_instruction} "
+                "The word must be a single standalone word — not a phrase. If the language supports it (e.g., Japanese), it may be a single kanji or kana. "
+                "Return a JSON object with the following fields:\n"
+                "- word: the selected word (e.g., '名前')\n"
+                "- translation: its English meaning\n"
+                "- type: part of speech (noun, verb, etc.)\n"
+                "- english_equivalents: list of English synonyms\n"
+                "- definition: short definition in the target language\n"
+                "- english_definition: short English definition\n"
+                "- example_sentence: a simple sentence using the word in the target language\n"
+                "- english_sentence: translation of the sentence\n"
+                "- options: 4 multiple-choice options (1 correct, 3 incorrect but related to the topic)\n\n"
+                "Example:\n"
+                "```json\n"
+                "{\n"
+                "  \"word\": \"名前\",\n"
+                "  \"translation\": \"name\",\n"
+                "  \"type\": \"noun\",\n"
+                "  \"english_equivalents\": [\"name\", \"title\"],\n"
+                "  \"definition\": \"人を識別する語\",\n"
+                "  \"english_definition\": \"Word identifying a person\",\n"
+                "  \"example_sentence\": \"私の名前は田中です。\",\n"
+                "  \"english_sentence\": \"My name is Tanaka.\",\n"
+                "  \"options\": [\n"
+                "    {\"id\": \"1\", \"option_text\": \"name\"},\n"
+                "    {\"id\": \"2\", \"option_text\": \"age\"},\n"
+                "    {\"id\": \"3\", \"option_text\": \"job\"},\n"
+                "    {\"id\": \"4\", \"option_text\": \"city\"}\n"
+                "  ]\n"
+                "}\n"
+                "```"
             )
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -258,8 +264,8 @@ async def generate_flashcard(
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": f"Generate a flashcard for {category} and lesson {lesson_name}."}
                 ],
-                max_tokens=300,
-                temperature=0.5
+                max_tokens=600,
+                temperature=0.7
             )
             raw_output = response.choices[0].message.content.strip()
 

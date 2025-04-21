@@ -14,15 +14,21 @@ interface FlashcardProps {
 }
 
 const fetchPexelsImage = async (query: string): Promise<string | null> => {
-  if (!query || query.includes('Error')) return null;
+  if (!query || query.includes('Error') || query.length < 3) return null;
   try {
     const response = await fetch(`/api/pexels/image?query=${encodeURIComponent(query)}`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
     });
-    if (!response.ok) throw new Error('Failed to fetch image');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+    }
     const data = await response.json();
-    return data.image_url || null;
+    if (!data.image_url) {
+      console.warn(`[fetchPexelsImage] No image_url for query: ${query}`);
+      return null;
+    }
+    return data.image_url;
   } catch (error) {
     console.error('[fetchPexelsImage] Error:', error);
     return null;
@@ -45,7 +51,7 @@ const debounce = <F extends (...args: any[]) => Promise<any>>(
   };
 };
 
-const debouncedFetchPexelsImage = debounce(fetchPexelsImage, 300);
+const debouncedFetchPexelsImage = debounce(fetchPexelsImage, 1000); // Increased to 1000ms
 
 const Flashcard: React.FC<FlashcardProps> = ({ flashcard, lessonName, flashcardCount, totalFlashcards, activityId, onComplete }) => {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -56,18 +62,16 @@ const Flashcard: React.FC<FlashcardProps> = ({ flashcard, lessonName, flashcardC
 
   useEffect(() => {
     const loadImage = async () => {
-      if (flashcard.translation && !flashcard.word.includes('Error')) {
-        console.log('[Flashcard] Querying Pexels with:', flashcard.translation);
-        const url = await debouncedFetchPexelsImage(flashcard.translation);
-        setImageUrl(url);
-      } else {
-        setImageUrl(null);
-      }
+      setLoading(true);
+      const query = flashcard.english_equivalents?.[0] || flashcard.translation || 'language';
+      console.log('[Flashcard] Querying Pexels with:', query);
+      const url = await debouncedFetchPexelsImage(query);
+      setImageUrl(url || 'https://placehold.co/600x400?text=No+Image');
       setLoading(false);
     };
     loadImage();
     console.log(`[Flashcard] Rendering ${flashcardCount}/${totalFlashcards}, word: ${flashcard.word}, activityId: ${activityId}`);
-  }, [flashcard, flashcardCount, totalFlashcards, activityId]);
+  }, [flashcard.word]); // Depend only on flashcard.word
 
   const handleOptionClick = (optionId: string) => {
     if (!isSubmitted) {
@@ -107,7 +111,7 @@ const Flashcard: React.FC<FlashcardProps> = ({ flashcard, lessonName, flashcardC
         <h3 className="text-xl font-semibold text-[#252B2F] mb-4">Flashcard {flashcardCount}/{totalFlashcards}</h3>
         {!isSubmitted ? (
           <div className="flex flex-col flex-grow">
-            {imageUrl && imageUrl !== 'https://placehold.co/600x400' ? (
+            {imageUrl ? (
               <img
                 src={imageUrl}
                 alt={flashcard.word}

@@ -54,13 +54,20 @@ async def get_dashboard(user_id: int = Depends(get_current_user), db: AsyncSessi
         result = await db.execute(select(Lesson).filter(Lesson.category_id.in_(category_ids)))
         lessons = result.scalars().all()
 
-        result = await db.execute(select(Progress).filter(Progress.user_id == user_id, Progress.category_id.in_(category_ids)))
+        result = await db.execute(
+            select(Progress).filter(
+                Progress.user_id == user_id,
+                Progress.category_id.in_(category_ids),
+                Progress.type == "lesson",
+                Progress.completed == True
+            )
+        )
         progress_records = result.scalars().all()
-        completed_activities = {p.activity_id for p in progress_records if p.completed}
+        completed_lesson_ids = {p.activity_id.split("lesson-")[1] for p in progress_records if p.activity_id.startswith("lesson-")}
 
-        total_activities = max(len(lessons) * 5, 1)
-        completed_count = len(completed_activities)
-        progress = (completed_count / total_activities * 100)
+        total_lessons = len(lessons)
+        completed_lessons = len(completed_lesson_ids)
+        progress = (completed_lessons / total_lessons * 100) if total_lessons > 0 else 0
 
         lesson_responses = []
         for lesson in lessons:
@@ -71,7 +78,7 @@ async def get_dashboard(user_id: int = Depends(get_current_user), db: AsyncSessi
                     id=str(lesson.id),
                     title=lesson.name,
                     subtitle=lesson.description or "Learn key phrases",
-                    completed=any(p.activity_id == f"lesson-{lesson.id}" and p.completed for p in progress_records),
+                    completed=str(lesson.id) in completed_lesson_ids,
                     categoryId=str(lesson.category_id)
                 )
             )
@@ -84,7 +91,7 @@ async def get_dashboard(user_id: int = Depends(get_current_user), db: AsyncSessi
                 id=str(chapter_id),
                 name=f"Chapter {chapter_id}: {chapter_name}",
                 difficulty=chapter_difficulty,
-                progress=progress,
+                progress=round(progress, 1),
                 lessons=lesson_responses
             )
         )

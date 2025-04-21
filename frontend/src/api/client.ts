@@ -7,6 +7,19 @@ export const apiClient: AxiosInstance = axios.create({
   },
 });
 
+// Add request interceptor to include JWT token
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Response interceptor for handling 401 errors
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {

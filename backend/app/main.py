@@ -7,7 +7,7 @@ from app.db_seed import seed_database
 from app.api import auth, sentence, flashcard, dialogue, category, dashboard, pexels, lesson
 
 import logging
-from logging_config import configure_logging
+from app.logging_config import configure_logging
 
 # Apply logging configuration
 configure_logging()

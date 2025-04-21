@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LessonResponse, LessonActivity } from '../types/lesson';
 import { Flashcard as FlashcardType } from '../types/flashcard';
@@ -16,9 +16,10 @@ const fetchInitialLesson = async (lessonId: string, token: string): Promise<Less
   return response.data;
 };
 
-const fetchRemainingLesson = async (lessonId: string, token: string): Promise<LessonResponse> => {
-  const response = await apiClient.get(`/api/lesson/${lessonId}/remaining`, {
+const fetchNextActivity = async (lessonId: string, currentActivityId: string, token: string): Promise<LessonResponse> => {
+  const response = await apiClient.get(`/api/lesson/${lessonId}/next`, {
     headers: { Authorization: `Bearer ${token}` },
+    params: { current_activity_id: currentActivityId },
   });
   return response.data;
 };
@@ -27,73 +28,102 @@ const Lesson: React.FC = () => {
   const { lessonId } = useParams<{ lessonId: string }>();
   const navigate = useNavigate();
   const { token, user } = useAuth();
-  const [lesson, setLesson] = useState<LessonResponse | null>(null);
+  const [activities, setActivities] = useState<LessonActivity[]>([]);
+  const [currentActivityIndex, setCurrentActivityIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [currentSet, setCurrentSet] = useState(0);
-  const [currentActivityInSet, setCurrentActivityInSet] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isFetchingNext, setIsFetchingNext] = useState(false);
   const [flashcardWords, setFlashcardWords] = useState<string[]>([]);
-  const [flashcardCount, setFlashcardCount] = useState(1);
   const [performance, setPerformance] = useState<{
     correct: number;
     total: number;
     mistakes: { activityId: string; type: string; word?: string }[];
   }>({ correct: 0, total: 0, mistakes: [] });
   const [isCheckpoint, setIsCheckpoint] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [isRemainingLoading, setIsRemainingLoading] = useState(false);
+
+  const fetchNext = useCallback(
+    async (currentActivityId: string) => {
+      if (isFetchingNext) {
+        console.log('[Lesson] Skipping fetchNext, already fetching');
+        return;
+      }
+      setIsFetchingNext(true);
+      try {
+        console.log('[Lesson] Fetching next activity for:', currentActivityId);
+        const nextData = await fetchNextActivity(lessonId!, currentActivityId, token!);
+        console.log('[Lesson] Received next activities:', nextData.activities);
+        if (nextData.activities.length === 0) {
+          console.warn('[Lesson] No more activities returned for:', currentActivityId);
+          return;
+        }
+        setActivities((prev) => {
+          const newActivities = nextData.activities.filter(
+            (newAct) => !prev.some((act) => act.id === newAct.id)
+          );
+          console.log('[Lesson] Appended activities:', newActivities);
+          return [...prev, ...newActivities];
+        });
+      } catch (err: any) {
+        console.error('[Lesson] Failed to fetch next activity:', err);
+        setError('Failed to load next activity. Please try again.');
+      } finally {
+        setIsFetchingNext(false);
+      }
+    },
+    [lessonId, token, isFetchingNext]
+  );
 
   useEffect(() => {
     if (!lessonId) {
       setError('Invalid lesson ID');
-      setIsInitialLoading(false);
+      setIsLoading(false);
       return;
     }
     if (!token || !user) {
       setError('Please log in to access this lesson');
       navigate('/login');
-      setIsInitialLoading(false);
+      setIsLoading(false);
       return;
     }
 
-    const loadLesson = async () => {
+    const loadInitial = async () => {
       try {
-        // Load initial flashcard
         const initialData = await fetchInitialLesson(lessonId, token);
-        setLesson(initialData);
-        setIsInitialLoading(false);
         console.log('[Lesson] Loaded initial activities:', initialData.activities);
-
-        // Immediately load remaining activities in the background
-        setIsRemainingLoading(true);
-        try {
-          const remainingData = await fetchRemainingLesson(lessonId, token);
-          setLesson((prev) => ({
-            activities: [...(prev?.activities || []), ...remainingData.activities],
-          }));
-          setIsCheckpoint(
-            [...initialData.activities, ...remainingData.activities].some((a) =>
-              a.id.startsWith('review-') || a.id.startsWith('new-')
-            )
-          );
-          console.log('[Lesson] Loaded remaining activities:', remainingData.activities);
-        } catch (err: any) {
-          console.error('[Lesson] Failed to load remaining activities:', err);
-          // Non-critical error; proceed with initial activities
-        } finally {
-          setIsRemainingLoading(false);
-        }
+        setActivities(initialData.activities);
+        setIsCheckpoint(initialData.activities.some((a) => a.id.startsWith('review-') || a.id.startsWith('new-')));
+        setIsLoading(false);
       } catch (err: any) {
         console.error('[Lesson] Failed to load initial lesson:', err);
         setError('Failed to load lesson. Please try again.');
-        setIsInitialLoading(false);
+        setIsLoading(false);
       }
     };
 
-    loadLesson();
+    loadInitial();
   }, [lessonId, token, user, navigate]);
 
+  useEffect(() => {
+    if (isLoading || isFetchingNext || currentActivityIndex >= activities.length || activities.length === 0) {
+      console.log('[Lesson] Skipping preload, conditions not met:', {
+        isLoading,
+        isFetchingNext,
+        currentActivityIndex,
+        activitiesLength: activities.length,
+      });
+      return;
+    }
+
+    const currentActivity = activities[currentActivityIndex];
+    const nextIndex = currentActivityIndex + 1;
+    if (currentActivity.type === 'sentence' || nextIndex >= activities.length) {
+      console.log('[Lesson] Preloading next set for:', currentActivity.id);
+      fetchNext(currentActivity.id);
+    }
+  }, [currentActivityIndex, activities, isLoading, isFetchingNext, fetchNext]);
+
   const handleActivityComplete = (
-    result: { word: string; isCorrect: boolean; activityId: string } | { isCorrect: boolean; activityId: string },
+    result: { word?: string; isCorrect: boolean; activityId: string },
     activityType: string
   ) => {
     setPerformance((prev) => {
@@ -101,18 +131,18 @@ const Lesson: React.FC = () => {
       const newCorrect = prev.correct + (result.isCorrect ? 1 : 0);
       const newMistakes = result.isCorrect
         ? prev.mistakes
-        : [...prev.mistakes, { activityId: result.activityId, type: activityType, word: 'word' in result ? result.word : undefined }];
+        : [...prev.mistakes, { activityId: result.activityId, type: activityType, word: result.word }];
       return { correct: newCorrect, total: newTotal, mistakes: newMistakes };
     });
 
-    if (activityType === 'flashcard' && 'word' in result && result.isCorrect) {
-      setFlashcardWords((prev) => [...prev, result.word]);
+    if (activityType === 'flashcard' && result.word && result.isCorrect) {
+      setFlashcardWords((prev) => [...prev, result.word!]);
     }
 
     if (!result.isCorrect) {
       apiClient.post(
         `/api/lesson/${lessonId}/mistake`,
-        { activity_id: result.activityId, activity_type: activityType, word: 'word' in result ? result.word : undefined },
+        { activity_id: result.activityId, activity_type: activityType, word: result.word },
         { headers: { Authorization: `Bearer ${token}` } }
       ).catch((err) => console.error('[Lesson] Failed to report mistake:', err));
     }
@@ -123,18 +153,11 @@ const Lesson: React.FC = () => {
       { headers: { Authorization: `Bearer ${token}` } }
     ).catch((err) => console.error('[Lesson] Failed to report completion:', err));
 
-    console.log('[Lesson] Completing:', { activityType, currentSet, currentActivityInSet, isCorrect: result.isCorrect });
-    if (activityType === 'flashcard' && currentActivityInSet === 0) {
-      setCurrentActivityInSet(1);
-      setFlashcardCount(2);
-    } else if (activityType === 'flashcard' && currentActivityInSet === 1) {
-      setCurrentActivityInSet(2);
-      setFlashcardCount(1);
-    } else if (activityType === 'sentence') {
-      setCurrentSet((prev) => prev + 1);
-      setCurrentActivityInSet(0);
-      setFlashcardCount(1);
-      setFlashcardWords([]); // Reset flashcardWords for next set
+    console.log('[Lesson] Completing:', { activityType, currentActivityIndex, isCorrect: result.isCorrect, activitiesLength: activities.length });
+
+    // Only advance for flashcards
+    if (activityType === 'flashcard') {
+      setCurrentActivityIndex((prev) => prev + 1);
     }
   };
 
@@ -142,11 +165,15 @@ const Lesson: React.FC = () => {
     const score = performance.total > 0 ? (performance.correct / performance.total) * 100 : 0;
     if (isCheckpoint && score < 80) {
       setError('You need at least 80% to pass the checkpoint. Try again.');
-      setCurrentSet(0);
-      setCurrentActivityInSet(0);
-      setFlashcardCount(1);
+      setCurrentActivityIndex(0);
       setFlashcardWords([]);
       setPerformance({ correct: 0, total: 0, mistakes: [] });
+      setActivities([]);
+      setIsLoading(true);
+      fetchInitialLesson(lessonId!, token!).then((data) => {
+        setActivities(data.activities);
+        setIsLoading(false);
+      });
     } else {
       navigate('/dashboard');
     }
@@ -160,27 +187,15 @@ const Lesson: React.FC = () => {
     );
   }
 
-  if (isInitialLoading) {
-    return <LoadingSpinner message="Loading first activity..." />;
+  if (isLoading) {
+    return <LoadingSpinner message="Loading activity..." />;
   }
 
-  if (!lesson || !lessonId) {
-    return <LoadingSpinner message="Loading lesson..." />;
-  }
-
-  const flashcardActivities = lesson.activities.filter((a: LessonActivity) => a.type === 'flashcard');
-  const sentenceActivities = lesson.activities.filter((a: LessonActivity) => a.type === 'sentence');
-
-  const flashcardStartIndex = isCheckpoint ? 0 : currentSet * 2;
-  const currentFlashcards = isCheckpoint
-    ? flashcardActivities
-    : flashcardActivities.slice(flashcardStartIndex, flashcardStartIndex + 2);
-  const currentSentence = isCheckpoint ? sentenceActivities[0] : sentenceActivities[currentSet];
-
-  if (!currentFlashcards.length || (currentActivityInSet === 2 && !currentSentence)) {
-    if (isRemainingLoading) {
-      return <LoadingSpinner message="Loading remaining activities..." />;
+  if (currentActivityIndex >= activities.length) {
+    if (isFetchingNext) {
+      return <LoadingSpinner message="Loading next activity..." />;
     }
+    console.log('[Lesson] Lesson completed, performance:', performance);
     return (
       <div className="min-h-screen bg-[#FFFFFF] flex items-center justify-center">
         <div className="text-center">
@@ -200,32 +215,24 @@ const Lesson: React.FC = () => {
     );
   }
 
-  const lessonIdNum = parseInt(lessonId);
-  let activity: LessonActivity;
-  let lessonName: string;
-  let nextFlashcard: FlashcardType | undefined;
+  const currentActivity = activities[currentActivityIndex];
+  const nextActivity = currentActivityIndex + 1 < activities.length ? activities[currentActivityIndex + 1] : undefined;
+  const lessonIdNum = parseInt(lessonId!);
+  const lessonName = currentActivity.type === 'flashcard' ? (currentActivity.data.title || 'Lesson') : 'Sentence Practice';
+  const nextFlashcard = nextActivity && nextActivity.type === 'flashcard' ? (nextActivity.data as FlashcardType) : undefined;
 
-  if (currentActivityInSet < 2 && currentFlashcards[currentActivityInSet]) {
-    activity = currentFlashcards[currentActivityInSet];
-    lessonName = lesson.activities[0]?.data.title || 'Lesson';
-    // Set next flashcard for preloading
-    if (currentActivityInSet === 0 && currentFlashcards[1]) {
-      nextFlashcard = currentFlashcards[1].data as FlashcardType;
-    } else if (currentActivityInSet === 1 && sentenceActivities[currentSet]) {
-      // No next flashcard for sentence
-      nextFlashcard = undefined;
-    }
-  } else if (currentActivityInSet === 2 && currentSentence) {
-    activity = currentSentence;
-    lessonName = 'Sentence Practice';
-    // Set next flashcard for the next set
-    const nextSetFlashcardIndex = (currentSet + 1) * 2;
-    if (flashcardActivities[nextSetFlashcardIndex]) {
-      nextFlashcard = flashcardActivities[nextSetFlashcardIndex].data as FlashcardType;
-    }
-  } else {
-    return <LoadingSpinner message="Loading activity..." />;
-  }
+  const currentSet = Math.floor(currentActivityIndex / 3);
+  const activityInSet = currentActivityIndex % 3;
+  const flashcardCountInSet = activityInSet < 2 ? activityInSet + 1 : 1;
+  const totalFlashcardsInSet = isCheckpoint ? activities.filter((a) => a.type === 'flashcard').length : 2;
+
+  console.log('[Lesson] Rendering activity:', {
+    id: currentActivity.id,
+    type: currentActivity.type,
+    index: currentActivityIndex,
+    activitiesLength: activities.length,
+    activities: activities.map((a) => a.id),
+  });
 
   return (
     <div className="min-h-screen bg-[#FFFFFF] p-6">
@@ -233,31 +240,27 @@ const Lesson: React.FC = () => {
         <h1 className="text-3xl font-bold text-[#252B2F] mb-4">
           {isCheckpoint ? 'Checkpoint Review' : lessonName}
         </h1>
-        <p className="text-[#252B2F] mb-6">{activity.data.subtitle || ''}</p>
+        <p className="text-[#252B2F] mb-6">{currentActivity.data.subtitle || ''}</p>
         <div className="bg-[#FFFFFF] p-6 rounded-lg shadow-sm border border-[#DAE1EA]">
-          {activity.type === 'flashcard' && (
+          {currentActivity.type === 'flashcard' && (
             <FlashcardComponent
-              flashcard={activity.data as FlashcardType}
+              flashcard={currentActivity.data as FlashcardType}
               lessonName={lessonName}
-              flashcardCount={currentActivityInSet + 1}
-              totalFlashcards={isCheckpoint ? currentFlashcards.length : 2}
-              activityId={activity.id}
+              flashcardCount={flashcardCountInSet}
+              totalFlashcards={totalFlashcardsInSet}
+              activityId={currentActivity.id}
               onComplete={(result) => handleActivityComplete(result, 'flashcard')}
               nextFlashcard={nextFlashcard}
             />
           )}
-          {activity.type === 'sentence' && (
+          {currentActivity.type === 'sentence' && (
             <SentenceConstruction
               lessonId={lessonIdNum}
               flashcardWords={flashcardWords}
-              sentenceData={activity.data}
-              activityId={activity.id}
-              onComplete={(isCorrect: boolean) =>
-                handleActivityComplete(
-                  { isCorrect, activityId: activity.id },
-                  'sentence'
-                )
-              }
+              sentenceData={currentActivity.data}
+              activityId={currentActivity.id}
+              onComplete={(result) => handleActivityComplete(result, 'sentence')}
+              onNext={() => setCurrentActivityIndex((prev) => prev + 1)}
             />
           )}
         </div>

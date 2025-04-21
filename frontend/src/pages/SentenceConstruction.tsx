@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { apiClient } from '../api/client';
 import { Button } from '../components/Common/Button';
+import ReactMarkdown from 'react-markdown';
 
 interface SentenceData {
   sentence_id: number;
@@ -15,7 +17,8 @@ interface SentenceConstructionProps {
   flashcardWords: string[];
   sentenceData: SentenceData;
   activityId: string;
-  onComplete: (isCorrect: boolean) => void;
+  onComplete: (result: { isCorrect: boolean; activityId: string }) => void;
+  onNext: () => void;
 }
 
 const SentenceConstruction: React.FC<SentenceConstructionProps> = ({
@@ -24,26 +27,36 @@ const SentenceConstruction: React.FC<SentenceConstructionProps> = ({
   sentenceData,
   activityId,
   onComplete,
+  onNext,
 }) => {
   const [error, setError] = useState<string | null>(null);
   const [constructedSentence, setConstructedSentence] = useState<string[]>([]);
   const [availableWords, setAvailableWords] = useState<string[]>(sentenceData.scrambled_words || []);
   const [showEnglish, setShowEnglish] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
+  const [submissionResult, setSubmissionResult] = useState<{
+    is_correct: boolean;
+    feedback: string;
+    translated_sentence: string;
+    explanation: string;
+    user_answer: string;
+  } | null>(null);
+  const [revealedHints, setRevealedHints] = useState<boolean[]>(new Array(sentenceData.hints.length).fill(false));
 
   // Validate sentenceData
-  if (
-    !sentenceData ||
-    !Array.isArray(sentenceData.scrambled_words) ||
-    sentenceData.scrambled_words.length < 2 ||
-    !sentenceData.original_sentence ||
-    !sentenceData.english_sentence ||
-    !Array.isArray(sentenceData.hints)
-  ) {
-    console.error('[SentenceConstruction] Invalid sentence data:', sentenceData);
-    setError('Unable to load sentence. Please try again.');
-  }
+  useEffect(() => {
+    if (
+      !sentenceData ||
+      !Array.isArray(sentenceData.scrambled_words) ||
+      sentenceData.scrambled_words.length < 2 ||
+      !sentenceData.original_sentence ||
+      !sentenceData.english_sentence ||
+      !Array.isArray(sentenceData.hints)
+    ) {
+      console.error('[SentenceConstruction] Invalid sentence data:', JSON.stringify(sentenceData, null, 2));
+      setError('Unable to load sentence. Please try again.');
+    }
+  }, [sentenceData]);
 
   const handleWordClick = (word: string, from: 'available' | 'constructed') => {
     if (isSubmitted) return;
@@ -56,36 +69,41 @@ const SentenceConstruction: React.FC<SentenceConstructionProps> = ({
     }
   };
 
-  const handleSubmit = () => {
-    if (isSubmitted) return;
-    const userSentence = constructedSentence.join(' ');
-    const correctSentence = sentenceData.original_sentence.trim();
-    const isCorrect = userSentence === correctSentence;
-    setIsCorrect(isCorrect);
-    setIsSubmitted(true);
-    onComplete(isCorrect);
-    console.log('[SentenceConstruction] Submitted:', { userSentence, correctSentence, isCorrect });
+  const handleRevealHint = (index: number) => {
+    setRevealedHints((prev) => {
+      const newHints = [...prev];
+      newHints[index] = true;
+      return newHints;
+    });
   };
 
-  const handleReset = () => {
-    setConstructedSentence([]);
-    setAvailableWords(sentenceData.scrambled_words || []);
-    setIsSubmitted(false);
-    setIsCorrect(null);
+  const handleSubmit = async () => {
+    if (isSubmitted) return;
+    const userAnswer = constructedSentence.join(' ');
+    try {
+      const response = await apiClient.post(`/api/sentence/submit`, {
+        sentence_id: sentenceData.sentence_id,
+        user_answer: userAnswer,
+      });
+      const result = response.data;
+      setSubmissionResult(result);
+      setIsSubmitted(true);
+      onComplete({ isCorrect: result.is_correct, activityId });
+      console.log('[SentenceConstruction] Submission result:', result);
+    } catch (err: any) {
+      console.error('[SentenceConstruction] Submission failed:', err);
+      setError('Failed to submit sentence. Please try again.');
+    }
   };
 
   if (error) {
-    return (
-      <div className="text-center text-red-600 text-lg">{error}</div>
-    );
+    return <div className="text-center text-red-600 text-lg">{error}</div>;
   }
 
   return (
     <div className="bg-[#FFFFFF] p-6 rounded-lg shadow-sm border border-[#DAE1EA]">
       <h3 className="text-xl font-semibold text-[#252B2F] mb-4">Sentence Construction</h3>
-      <p className="text-[#252B2F] mb-4">
-        Arrange the words to form the correct sentence:
-      </p>
+      <p className="text-[#252B2F] mb-4">Arrange the words to form the correct sentence:</p>
       <div className="mb-4">
         <div className="flex flex-wrap gap-2 p-2 border border-[#DAE1EA] rounded min-h-[40px]">
           {constructedSentence.map((word, index) => (
@@ -127,40 +145,59 @@ const SentenceConstruction: React.FC<SentenceConstructionProps> = ({
           </p>
         )}
       </div>
-      {isSubmitted && (
+      {sentenceData.hints.length > 0 && !isSubmitted && (
         <div className="mb-4">
-          <p className={`text-${isCorrect ? '[#0EBE75]' : 'red-600'} text-lg`}>
-            {isCorrect ? 'Correct!' : `Incorrect. The correct sentence is: ${sentenceData.original_sentence}`}
-          </p>
-          <p className="text-[#252B2F]"><strong>Explanation:</strong> {sentenceData.explanation}</p>
-          {sentenceData.hints.length > 0 && (
-            <div>
-              <strong>Hints:</strong>
-              <ul className="list-disc pl-5 text-[#252B2F]">
-                {sentenceData.hints.map((hint, index) => (
-                  <li key={index}>{hint.text}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <p className="text-[#252B2F] font-semibold">Hints ({sentenceData.hints.length})</p>
+          <ul className="list-none pl-0">
+            {sentenceData.hints.map((hint, index) => (
+              <li key={index} className="mt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleRevealHint(index)}
+                  disabled={revealedHints[index]}
+                  className="text-sm bg-[#F5F7FA] hover:bg-[#DAE1EA] text-[#252B2F] !text-[#252B2F]"
+                >
+                  {revealedHints[index] ? hint.text : `Reveal Hint ${index + 1}`}
+                </Button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-      <div className="flex gap-4">
-        <Button
-          className="text-[#252B2F] hover:text-[#252B2F] py-2 px-4"
-          onClick={handleSubmit}
-          disabled={isSubmitted || constructedSentence.length === 0}
-        >
-          Submit
-        </Button>
-        <Button
-          className="text-[#252B2F] hover:text-[#252B2F] py-2 px-4"
-          onClick={handleReset}
-          disabled={!isSubmitted}
-        >
-          Try Again
-        </Button>
-      </div>
+      {isSubmitted && submissionResult && (
+        <div className="mb-4">
+          <p className={`text-${submissionResult.is_correct ? '[#0EBE75]' : 'red-600'} text-lg`}>
+            {submissionResult.feedback}
+          </p>
+          <p className="text-[#252B2F] mb-2">
+            <strong>Correct Sentence:</strong> {submissionResult.translated_sentence}
+          </p>
+          <p className="text-[#252B2F] mb-2">
+            <strong>Your Answer:</strong> {submissionResult.user_answer}
+          </p>
+          <div className="text-[#252B2F] mb-4 prose">
+            <strong>Explanation:</strong>
+            <ReactMarkdown>{submissionResult.explanation}</ReactMarkdown>
+          </div>
+          <Button
+            onClick={onNext}
+            className="bg-[#1079F1] !text-[#FFFFFF] hover:bg-[#0EBE75] hover:!text-[#FFFFFF] py-2 px-4"
+          >
+            Next Sentence
+          </Button>
+        </div>
+      )}
+      {!isSubmitted && (
+        <div className="flex gap-4">
+          <Button
+            className="text-[#252B2F] hover:text-[#252B2F] py-2 px-4"
+            onClick={handleSubmit}
+            disabled={constructedSentence.length === 0}
+          >
+            Submit
+          </Button>
+        </div>
+      )}
     </div>
   );
 };
