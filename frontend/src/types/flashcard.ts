@@ -11,4 +11,5 @@ export interface Flashcard {
   category: string;
   lesson_id: number;
   options: { id: string; option_text: string }[];
+  pexels_image_url: string; 
 }

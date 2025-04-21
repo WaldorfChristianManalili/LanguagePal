@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Optional
 
 class FlashcardResponse(BaseModel):
     flashcard_id: int
@@ -11,6 +11,10 @@ class FlashcardResponse(BaseModel):
     english_definition: str
     example_sentence: str
     english_sentence: str
-    category: str
-    lesson_id: int
-    options: List[Dict[str, str]]
+    category_id: int
+    user_id: int
+    used_count: int
+    options: Optional[List[str]] = []
+
+    class Config:
+        from_attributes = True

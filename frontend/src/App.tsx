@@ -1,15 +1,12 @@
 import { useState, useEffect, createContext, useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
 import Register from './components/Auth/Register';
-import SentenceConstruction from './pages/SentenceConstruction';
-import Flashcard from './pages/Flashcard';
-import SimulatedDialogue from './pages/SimulatedDialogue';
+import Lesson from './pages/Lesson'; // Import Lesson.tsx
 import Review from './pages/Review';
 import LoadingSpinner from './components/Common/LoadingSpinner';
 import { validateToken, login, signup } from './api/auth';
-import { getFlashcards } from './api/flashcard';
 
 interface AuthContextType {
   token: string | null;
@@ -27,54 +24,6 @@ export function useAuth() {
   }
   return context;
 }
-
-const LessonFlow: React.FC = () => {
-  const { lessonId } = useParams<{ lessonId: string }>();
-  const numericLessonId = parseInt(lessonId || '1', 10);
-  const [flashcardWords, setFlashcardWords] = useState<string[]>([]);
-  const [flashcardCount, setFlashcardCount] = useState(0);
-  const [currentStep, setCurrentStep] = useState<'flashcards' | 'sentence' | 'dialogue'>('flashcards');
-
-  const handleFlashcardComplete = (result: { word: string }) => {
-    setFlashcardWords((prev) => [...prev, result.word]);
-    setFlashcardCount((prev) => prev + 1);
-    if (flashcardCount + 1 >= 2) {
-      setCurrentStep('sentence');
-    }
-  };
-
-  const handleSentenceComplete = () => {
-    setCurrentStep('dialogue');
-  };
-
-  const handleDialogueComplete = () => {
-    window.location.href = '/review';
-  };
-
-  if (currentStep === 'flashcards') {
-    return (
-      <Flashcard
-        lessonId={numericLessonId}
-        onComplete={handleFlashcardComplete}
-      />
-    );
-  } else if (currentStep === 'sentence') {
-    return (
-      <SentenceConstruction
-        lessonId={numericLessonId}
-        flashcardWords={flashcardWords}
-        onComplete={handleSentenceComplete}
-      />
-    );
-  } else {
-    return (
-      <SimulatedDialogue
-        lessonId={numericLessonId}
-        onComplete={handleDialogueComplete}
-      />
-    );
-  }
-};
 
 function App() {
   const [token, setToken] = useState<string | null>(null);
@@ -199,7 +148,7 @@ function App() {
           />
           <Route
             path="/lesson/:lessonId"
-            element={token ? <LessonFlow /> : <Navigate to="/login" />}
+            element={token ? <Lesson /> : <Navigate to="/login" />}
           />
           <Route
             path="/review"

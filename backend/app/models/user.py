@@ -15,3 +15,4 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
     progress = relationship("Progress", back_populates="user")
+    flashcards = relationship("Flashcard", back_populates="user")

@@ -8,12 +8,20 @@ from sqlalchemy import select
 from app.models.flashcard import Flashcard
 from app.models.category import Category
 from fastapi import HTTPException
+import logging
+
+# Suppress SQLAlchemy logs
+for logger_name in ['sqlalchemy', 'sqlalchemy.engine', 'sqlalchemy.orm', 'sqlalchemy.pool', 'sqlalchemy.dialects']:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 client = AsyncOpenAI(api_key=api_key, max_retries=0) if api_key else None
 
 async def translate_sentence(sentence: str, target_language: str) -> dict:
+    # Unchanged, keeping your existing function
     if not client:
         return {
             "words": ["OpenAI API key not provided"],
@@ -127,203 +135,248 @@ async def translate_sentence(sentence: str, target_language: str) -> dict:
             "explanation": "Translation error"
         }
 
-async def generate_flashcard(category: str, target_language: str, db: AsyncSession = None, word: str = None) -> dict:
+async def generate_flashcard(
+    category: str,
+    target_language: str,
+    category_id: int,
+    lesson_name: str,
+    db: AsyncSession,
+    user_id: int,
+    word: str = None,
+    harder: bool = False,
+    max_retries: int = 5,
+    is_new_lesson: bool = False
+) -> dict:
     if not client:
-        if db:
-            # Try cached flashcard
-            result = await db.execute(
-                select(Flashcard).filter(Flashcard.category_id == 1).order_by(Flashcard.used_count.asc()).limit(1)
+        logger.error("No OpenAI client available")
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+
+    # Check for cached flashcard
+    if word:
+        result = await db.execute(
+            select(Flashcard).filter(
+                Flashcard.word == word,
+                Flashcard.user_id == user_id,
+                Flashcard.category_id == category_id
             )
-            cached = result.scalars().first()
-            if cached:
-                return {
-                    "flashcard_id": cached.id,
-                    "word": cached.word,
-                    "translation": cached.translation,
-                    "type": cached.type or "noun",
-                    "english_equivalents": cached.english_equivalents or [cached.translation],
-                    "definition": cached.definition or "A word",
-                    "english_definition": cached.english_definition or "A word",
-                    "example_sentence": cached.example_sentence or f"{cached.word} example.",
-                    "english_sentence": cached.english_sentence or f"{cached.translation} example.",
-                    "options": [
-                        {"id": "1", "option_text": cached.translation},
-                        {"id": "2", "option_text": "incorrect1"},
-                        {"id": "3", "option_text": "incorrect2"},
-                        {"id": "4", "option_text": "incorrect3"}
-                    ]
-                }
-        # Generic fallback
-        return {
-            "flashcard_id": 0,
-            "word": "word",
-            "translation": "word",
-            "type": "noun",
-            "english_equivalents": ["word"],
-            "definition": "A vocabulary item",
-            "english_definition": "A vocabulary item",
-            "example_sentence": f"A simple {target_language} word.",
-            "english_sentence": "A simple word.",
-            "options": [
-                {"id": "1", "option_text": "word"},
-                {"id": "2", "option_text": "incorrect1"},
-                {"id": "3", "option_text": "incorrect2"},
-                {"id": "4", "option_text": "incorrect3"}
-            ]
-        }
-    
-    try:
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        f"You are Language Pal, a friendly language tutor. Generate a flashcard for a vocabulary word in the category '{category}' for {target_language}. "
-                        f"{'Use the word: ' + word + '.' if word else 'Choose a relevant word.'} "
-                        f"Return a JSON object with: "
-                        f"- 'word': the vocabulary word or phrase in {target_language}. "
-                        f"- 'translation': the primary English translation. "
-                        f"- 'type': part of speech (e.g., noun, verb, adjective, interjection). "
-                        f"- 'english_equivalents': list of English synonyms or equivalent words/phrases (include the translation). "
-                        f"- 'definition': a concise definition in {target_language} (max 10 words). "
-                        f"- 'english_definition': a concise English definition (max 10 words). "
-                        f"- 'example_sentence': a simple example sentence in {target_language}. "
-                        f"- 'english_sentence': the English translation of the example sentence. "
-                        f"- 'options': 4 multiple-choice options for the translation (1 correct, 3 incorrect), each with 'id' (string) and 'option_text'. "
-                        f"Example: "
-                        f"```json\n"
-                        f"{{\n"
-                        f"  \"word\": \"casa\",\n"
-                        f"  \"translation\": \"house\",\n"
-                        f"  \"type\": \"noun\",\n"
-                        f"  \"english_equivalents\": [\"house\", \"home\"],\n"
-                        f"  \"definition\": \"Lugar donde las personas viven\",\n"
-                        f"  \"english_definition\": \"Place where people live\",\n"
-                        f"  \"example_sentence\": \"Vivo en una casa grande.\",\n"
-                        f"  \"english_sentence\": \"I live in a large house.\",\n"
-                        f"  \"options\": [\n"
-                        f"    {{\"id\": \"1\", \"option_text\": \"house\"}},\n"
-                        f"    {{\"id\": \"2\", \"option_text\": \"car\"}},\n"
-                        f"    {{\"id\": \"3\", \"option_text\": \"tree\"}},\n"
-                        f"    {{\"id\": \"4\", \"option_text\": \"book\"}}\n"
-                        f"  ]\n"
-                        f"}}\n"
-                        f"```"
-                    )
-                },
-                {"role": "user", "content": f"Generate a flashcard for {category} in {target_language}."}
-            ],
-            max_tokens=300,
-            temperature=0.5
         )
-        raw_output = response.choices[0].message.content.strip()
+        cached_flashcard = result.scalars().first()
+        if cached_flashcard:
+            if ' ' in cached_flashcard.word or len(cached_flashcard.word.split()) > 1:
+                logger.error(f"Cached flashcard word '{cached_flashcard.word}' is a phrase")
+                raise HTTPException(status_code=500, detail="Cached flashcard contains a phrase")
+            logger.info(f"Using cached flashcard: {word}, user: {user_id}, lesson: {lesson_name}")
+            return {
+                "flashcard_id": cached_flashcard.id,
+                "word": cached_flashcard.word,
+                "translation": cached_flashcard.translation,
+                "type": cached_flashcard.type,
+                "english_equivalents": json.loads(cached_flashcard.english_equivalents),
+                "definition": cached_flashcard.definition,
+                "english_definition": cached_flashcard.english_definition,
+                "example_sentence": cached_flashcard.example_sentence,
+                "english_sentence": cached_flashcard.english_sentence,
+                "options": json.loads(cached_flashcard.options) if cached_flashcard.options else [
+                    {"id": "1", "option_text": cached_flashcard.translation},
+                    {"id": "2", "option_text": "age"},
+                    {"id": "3", "option_text": "job"},
+                    {"id": "4", "option_text": "city"}
+                ]
+            }
 
-        if raw_output.startswith("```json") and raw_output.endswith("```"):
-            raw_output = raw_output[7:-3].strip()
-        
-        result = json.loads(raw_output)
-        
-        if not isinstance(result, dict) or not all(
-            key in result
-            for key in [
-                "word",
-                "translation",
-                "type",
-                "english_equivalents",
-                "definition",
-                "english_definition",
-                "example_sentence",
-                "english_sentence",
-                "options"
-            ]
-        ):
-            raise ValueError("Invalid flashcard response format")
+    # Fetch user's existing flashcards to avoid duplicates
+    result = await db.execute(
+        select(Flashcard.word).filter(
+            Flashcard.user_id == user_id,
+            Flashcard.category_id == category_id
+        )
+    )
+    excluded_words = [row[0] for row in result.fetchall()]
+    logger.info(f"Excluded words for user {user_id}, category {category_id}: {excluded_words}")
 
-        flashcard_data = {
-            "word": result["word"].strip(),
-            "translation": result["translation"].strip(),
-            "type": result["type"].strip(),
-            "english_equivalents": [eq.strip() for eq in result["english_equivalents"]],
-            "definition": result["definition"].strip(),
-            "english_definition": result["english_definition"].strip(),
-            "example_sentence": result["example_sentence"].strip(),
-            "english_sentence": result["english_sentence"].strip(),
-            "options": [
-                {"id": opt["id"], "option_text": opt["option_text"].strip()}
-                for opt in result["options"]
-            ]
-        }
+    # Track words generated during retries
+    failed_words = set()
 
-        if db:
+    attempts = 0
+    while attempts < max_retries:
+        try:
+            logger.info(f"Generating flashcard: category={category}, lesson={lesson_name}, target_language={target_language}, harder={harder}, attempt={attempts + 1}")
+            
+            # Simplified prompt
+            word_instruction = f"Use the word: {word}." if word else (
+                f"Choose a single word for the lesson '{lesson_name}' (e.g., 名前 for 'Saying your name')."
+            )
+            difficulty_instruction = (
+                "Choose a less common word (A2 level)." if harder else
+                "Choose a basic word (A1 level)."
+            )
+            excluded_instruction = (
+                f"Absolutely avoid these words: {', '.join(excluded_words + list(failed_words))}."
+                if (excluded_words or failed_words) else ""
+            )
+            new_lesson_instruction = (
+                "Ensure the word is unique for this user." if is_new_lesson else ""
+            )
+            
+            prompt = (
+                f"Generate a flashcard for a single word in {target_language} for the category '{category}' and lesson '{lesson_name}'. "
+                f"{word_instruction} {difficulty_instruction} {excluded_instruction} {new_lesson_instruction} "
+                f"The word must be a single kanji or kana term, not a phrase. "
+                f"Return a JSON object with: "
+                f"- 'word': the word (e.g., '名前'). "
+                f"- 'translation': English translation. "
+                f"- 'type': part of speech (noun, verb, etc.). "
+                f"- 'english_equivalents': list of English synonyms. "
+                f"- 'definition': short definition in {target_language}. "
+                f"- 'english_definition': short English definition. "
+                f"- 'example_sentence': simple sentence in {target_language}. "
+                f"- 'english_sentence': English translation of the sentence. "
+                f"- 'options': 4 multiple-choice options (1 correct, 3 incorrect, related to '{category}'). "
+                f"Example: "
+                f"```json\n"
+                f"{{\n"
+                f"  \"word\": \"名前\",\n"
+                f"  \"translation\": \"name\",\n"
+                f"  \"type\": \"noun\",\n"
+                f"  \"english_equivalents\": [\"name\", \"title\"],\n"
+                f"  \"definition\": \"人を識別する語\",\n"
+                f"  \"english_definition\": \"Word identifying a person\",\n"
+                f"  \"example_sentence\": \"私の名前は田中です。\",\n"
+                f"  \"english_sentence\": \"My name is Tanaka.\",\n"
+                f"  \"options\": [\n"
+                f"    {{\"id\": \"1\", \"option_text\": \"name\"}},\n"
+                f"    {{\"id\": \"2\", \"option_text\": \"age\"}},\n"
+                f"    {{\"id\": \"3\", \"option_text\": \"job\"}},\n"
+                f"    {{\"id\": \"4\", \"option_text\": \"city\"}}\n"
+                f"  ]\n"
+                f"}}\n"
+                f"```"
+            )
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Generate a flashcard for {category} and lesson {lesson_name}."}
+                ],
+                max_tokens=300,
+                temperature=0.5
+            )
+            raw_output = response.choices[0].message.content.strip()
+
+            if raw_output.startswith("```json") and raw_output.endswith("```"):
+                raw_output = raw_output[7:-3].strip()
+            
+            result = json.loads(raw_output)
+            
+            if not isinstance(result, dict) or not all(
+                key in result
+                for key in [
+                    "word",
+                    "translation",
+                    "type",
+                    "english_equivalents",
+                    "definition",
+                    "english_definition",
+                    "example_sentence",
+                    "english_sentence",
+                    "options"
+                ]
+            ):
+                logger.error(f"Invalid flashcard format: {raw_output}")
+                raise ValueError("Invalid flashcard response format")
+
+            word = result["word"].strip()
+            if ' ' in word or len(word.split()) > 1:
+                logger.error(f"Generated word '{word}' is a phrase")
+                raise ValueError("Flashcard word must be a single word")
+
+            if word in excluded_words or word in failed_words:
+                logger.warning(f"Generated word '{word}' already used by user {user_id}, retrying")
+                failed_words.add(word)
+                attempts += 1
+                continue
+
+            flashcard_data = {
+                "word": word,
+                "translation": result["translation"].strip(),
+                "type": result["type"].strip(),
+                "english_equivalents": result["english_equivalents"],
+                "definition": result["definition"].strip(),
+                "english_definition": result["english_definition"].strip(),
+                "example_sentence": result["example_sentence"].strip(),
+                "english_sentence": result["english_sentence"].strip(),
+                "options": [
+                    {"id": opt["id"], "option_text": opt["option_text"].strip()}
+                    for opt in result["options"]
+                ]
+            }
+
             result = await db.execute(
                 select(Category).filter(Category.name == category)
             )
             category_obj = result.scalars().first()
             if not category_obj:
+                logger.error(f"Category not found: {category}")
                 raise HTTPException(status_code=404, detail="Category not found")
             
             flashcard = Flashcard(
                 word=flashcard_data["word"],
                 translation=flashcard_data["translation"],
                 type=flashcard_data["type"],
-                english_equivalents=flashcard_data["english_equivalents"],
+                english_equivalents=json.dumps(flashcard_data["english_equivalents"]),
                 definition=flashcard_data["definition"],
                 english_definition=flashcard_data["english_definition"],
                 example_sentence=flashcard_data["example_sentence"],
                 english_sentence=flashcard_data["english_sentence"],
                 category_id=category_obj.id,
-                used_count=1
+                user_id=user_id,
+                used_count=1,
+                options=json.dumps(flashcard_data["options"])
             )
             db.add(flashcard)
             await db.commit()
             await db.refresh(flashcard)
             flashcard_data["flashcard_id"] = flashcard.id
+            flashcard_data["english_equivalents"] = json.loads(flashcard.english_equivalents)
+            flashcard_data["options"] = json.loads(flashcard.options)
 
-        return flashcard_data
-    except (OpenAIError, ValueError, json.JSONDecodeError) as e:
-        if db:
-            # Try cached flashcard
-            result = await db.execute(
-                select(Flashcard).filter(Flashcard.category_id == 1).order_by(Flashcard.used_count.asc()).limit(1)
-            )
-            cached = result.scalars().first()
-            if cached:
-                return {
-                    "flashcard_id": cached.id,
-                    "word": cached.word,
-                    "translation": cached.translation,
-                    "type": cached.type or "noun",
-                    "english_equivalents": cached.english_equivalents or [cached.translation],
-                    "definition": cached.definition or "A word",
-                    "english_definition": cached.english_definition or "A word",
-                    "example_sentence": cached.example_sentence or f"{cached.word} example.",
-                    "english_sentence": cached.english_sentence or f"{cached.translation} example.",
-                    "options": [
-                        {"id": "1", "option_text": cached.translation},
-                        {"id": "2", "option_text": "incorrect1"},
-                        {"id": "3", "option_text": "incorrect2"},
-                        {"id": "4", "option_text": "incorrect3"}
-                    ]
-                }
-        # Generic fallback
-        return {
-            "flashcard_id": 0,
-            "word": "word",
-            "translation": "word",
-            "type": "noun",
-            "english_equivalents": ["word"],
-            "definition": "A vocabulary item",
-            "english_definition": "A vocabulary item",
-            "example_sentence": f"A simple {target_language} word.",
-            "english_sentence": "A simple word.",
-            "options": [
-                {"id": "1", "option_text": "word"},
-                {"id": "2", "option_text": "incorrect1"},
-                {"id": "3", "option_text": "incorrect2"},
-                {"id": "4", "option_text": "incorrect3"}
-            ]
-        }
+            logger.info(f"Generated flashcard: {flashcard_data['word']} for lesson: {lesson_name}")
+            return flashcard_data
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Flashcard attempt {attempts + 1} failed: {str(e)}")
+            attempts += 1
+            if attempts >= max_retries:
+                if is_new_lesson:
+                    fallback_words = {
+                        "Saying your name": ["君", "姓"],
+                        "Greetings": ["挨拶", "元気"],
+                        "Introducing Yourself": ["趣味", "年齢"],
+                        "Developing Fluency": ["会話", "流暢"]
+                    }.get(lesson_name, ["単語"])
+                    for fallback_word in fallback_words:
+                        if fallback_word not in excluded_words and fallback_word not in failed_words:
+                            logger.info(f"Using fallback word: {fallback_word}")
+                            return await generate_flashcard(
+                                category=category,
+                                target_language=target_language,
+                                category_id=category_id,
+                                lesson_name=lesson_name,
+                                db=db,
+                                user_id=user_id,
+                                word=fallback_word,
+                                harder=harder,
+                                max_retries=1,
+                                is_new_lesson=is_new_lesson
+                            )
+                raise HTTPException(status_code=500, detail="Failed to generate valid flashcard")
+        except OpenAIError as e:
+            logger.error(f"OpenAI error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to generate flashcard")
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to generate flashcard")
+
+    raise HTTPException(status_code=500, detail="Failed to generate unique flashcard after retries")
 
 async def generate_situation(category: str, lesson: str, target_language: str) -> dict:
     if not client:
@@ -408,7 +461,7 @@ async def chat_message(situation: str, conversation: list, target_language: str,
             messages.append({"role": role, "content": msg["text"]})
 
         response = await client.chat.completions.create(
-            model="gmt-4o-mini",
+            model="gpt-4o-mini", # Fixed typo: 'gmt-4o-mini' to 'gpt-4o-mini'
             messages=messages,
             max_tokens=100,
             temperature=0.5

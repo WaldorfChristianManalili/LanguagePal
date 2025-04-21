@@ -4,8 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from app.database import engine, Base, get_db
 from app.db_seed import seed_database
-from app.api import auth, sentence, flashcard, dialogue, category, dashboard, pexels  # Add pexels
+from app.api import auth, sentence, flashcard, dialogue, category, dashboard, pexels, lesson
+
 import logging
+from logging_config import configure_logging
+
+# Apply logging configuration
+configure_logging()
+logging.info("Logging configured, starting application")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,13 +37,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(category.router, prefix="/api/category", tags=["Category"])
 app.include_router(sentence.router, prefix="/api/sentence", tags=["Sentence Construction"])
-app.include_router(flashcard.router, prefix="/api/flashcard", tags=["Flashcard Vocabulary"])  # Changed to /api/flashcard
+app.include_router(flashcard.router, prefix="/api/flashcard", tags=["Flashcard Vocabulary"])
 app.include_router(dialogue.router, prefix="/api/dialogue", tags=["Simulated Dialogues"])
 app.include_router(dashboard.router, prefix="", tags=["Dashboard"])
-app.include_router(pexels.router, prefix="/api/pexels", tags=["Pexels"])  # Added pexels
+app.include_router(pexels.router, prefix="/api/pexels", tags=["Pexels"])
+app.include_router(lesson.router, prefix="/api/lesson", tags=["Lesson"])
 
 @app.get("/")
 async def read_root():
